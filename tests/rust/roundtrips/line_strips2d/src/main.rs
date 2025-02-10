@@ -21,11 +21,10 @@ fn run(rec: &RecordingStream, _args: &Args) -> anyhow::Result<()> {
             .with_colors([0xAA0000CC, 0x00BB00DD])
             .with_labels(["hello", "friend"])
             .with_draw_order(300.0)
-            .with_class_ids([126, 127])
-            .with_instance_keys([66, 666]),
+            .with_class_ids([126, 127]),
     )?;
 
-    // Hack to establish 2d view bounds
+    // Hack to establish 2D view bounds
     rec.log(
         "rect",
         &Boxes2D::from_mins_and_sizes([(-10.0, -10.0)], [(20.0, 20.0)]),

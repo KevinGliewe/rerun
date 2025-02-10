@@ -23,7 +23,6 @@ def main() -> None:
     labels = ["hello", "friend"]
     draw_order = 300
     class_ids = np.array([126, 127], dtype=np.uint64)
-    instance_keys = np.array([66, 666], dtype=np.uint64)
 
     line_strips2d = rr.LineStrips2D(
         points,
@@ -32,7 +31,6 @@ def main() -> None:
         labels=labels,
         draw_order=draw_order,
         class_ids=class_ids,
-        instance_keys=instance_keys,
     )
 
     parser = argparse.ArgumentParser(description="Logs rich data using the Rerun SDK.")
@@ -42,7 +40,7 @@ def main() -> None:
     rr.script_setup(args, "rerun_example_roundtrip_line_strips2d")
 
     rr.log("line_strips2d", line_strips2d)
-    # Hack to establish 2d view bounds
+    # Hack to establish 2D view bounds
     rr.log("rect", rr.Boxes2D(centers=[0, 0], half_sizes=[10, 10]))
 
     rr.script_teardown(args)

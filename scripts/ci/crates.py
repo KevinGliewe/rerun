@@ -3,22 +3,20 @@
 """
 Versioning and packaging.
 
-Install dependencies:
-    python3 -m pip install -r scripts/ci/requirements.txt
-
 Use the script:
-    python3 scripts/ci/crates.py --help
+    pixi run python scripts/ci/crates.py --help
 
     # Update crate versions to the next prerelease version,
     # e.g. `0.8.0` -> `0.8.0-alpha.0`, `0.8.0-alpha.0` -> `0.8.0-alpha.1`
-    python3 scripts/ci/crates.py version --bump prerelase --dry-run
+    pixi run python scripts/ci/crates.py version --bump prerelase --dry-run
 
     # Update crate versions to an exact version
-    python3 scripts/ci/crates.py version --exact 0.10.1 --dry-run
+    pixi run python scripts/ci/crates.py version --exact 0.10.1 --dry-run
 
     # Publish all crates in topological order
-    python3 scripts/ci/publish.py --token <CRATES_IO_TOKEN>
+    pixi run python scripts/ci/publish.py --token <CRATES_IO_TOKEN>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,15 +35,13 @@ from typing import Any, Generator
 import git
 import requests
 import tomlkit
-from colorama import Fore
-from colorama import init as colorama_init
+from colorama import Fore, init as colorama_init
 from dag import DAG, RateLimiter
 from semver import VersionInfo
 
 CARGO_PATH = shutil.which("cargo") or "cargo"
 DEFAULT_PRE_ID = "alpha"
 MAX_PUBLISH_WORKERS = 3
-
 
 R = Fore.RED
 G = Fore.GREEN
@@ -56,12 +52,16 @@ X = Fore.RESET
 def cargo(
     args: str,
     *,
+    cargo_version: str | None = None,
     cwd: str | Path | None = None,
     env: dict[str, Any] = {},
     dry_run: bool = False,
     capture: bool = False,
 ) -> Any:
-    cmd = [CARGO_PATH] + args.split()
+    if cargo_version is None:
+        cmd = [CARGO_PATH] + args.split()
+    else:
+        cmd = [CARGO_PATH, f"+{cargo_version}"] + args.split()
     # print(f"> {subprocess.list2cmdline(cmd)}")
     if not dry_run:
         stderr = subprocess.STDOUT if capture else None
@@ -89,6 +89,8 @@ def get_workspace_crates(root: dict[str, Any]) -> dict[str, Crate]:
     for pattern in root["workspace"]["members"]:
         for crate in [member for member in glob(pattern) if os.path.isdir(member)]:
             crate_path = Path(crate)
+            if not os.path.exists(crate_path / "Cargo.toml"):
+                continue
             manifest_text = (crate_path / "Cargo.toml").read_text()
             manifest: dict[str, Any] = tomlkit.parse(manifest_text)
             crates[manifest["package"]["name"]] = Crate(manifest, crate_path)
@@ -154,6 +156,7 @@ def get_sorted_publishable_crates(ctx: Context, crates: dict[str, Crate]) -> dic
     ) -> None:
         crate = crates[name]
         for dependency in crate_deps(crate.manifest):
+            assert dependency.name != name, "Crate {name} had itself as a dependency"
             if dependency.name not in crates:
                 continue
             if dependency.name in visited:
@@ -383,11 +386,10 @@ def is_already_published(version: str, crate: Crate) -> bool:
     # the request failed
     if not resp.ok:
         detail = body["errors"][0]["detail"]
-        if detail == "Not Found":
-            # First time we're publishing this crate
-            return False
+        if resp.status_code == 404:
+            return False  # New crate that hasn't been published before
         else:
-            raise Exception(f"failed to get crate {crate_name}: {detail}")
+            raise Exception(f"Failed to get crate '{crate_name}': {resp.status_code} {detail}")
 
     # crate has not been uploaded yet
     if "versions" not in body:
@@ -402,7 +404,7 @@ def is_already_published(version: str, crate: Crate) -> bool:
 
 
 def parse_retry_delay_secs(error_message: str) -> float | None:
-    """Parses the retry-after datetime from a `cargo publish` error message, and returns the seconds remaining until that time."""
+    """Parses the retry-after datetime from a `cargo publish` error 429 message, and returns the seconds remaining until that time."""
 
     # Example:
     #   the remote server responded with an error (status 429 Too Many Requests):
@@ -419,7 +421,7 @@ def parse_retry_delay_secs(error_message: str) -> float | None:
     end = error_message.find(RETRY_AFTER_END, start)
     if end == -1:
         return None
-    retry_after = datetime.strptime(error_message[start:end], "%a, %d %b %Y %H:%M:%S")
+    retry_after = datetime.strptime(error_message[start:end], "%a, %d %b %Y %H:%M:%S").replace(tzinfo=timezone.utc)
     return (retry_after - datetime.now(timezone.utc)).total_seconds() * MAX_PUBLISH_WORKERS
 
 
@@ -428,17 +430,27 @@ def publish_crate(crate: Crate, token: str, version: str, env: dict[str, Any]) -
     name = package["name"]
 
     print(f"{G}Publishing{X} {B}{name}{X}…")
-    retry_attempts = 3
+    retry_attempts = 5
     while True:
         try:
-            cargo(f"publish --quiet --token {token}", cwd=crate.path, env=env, dry_run=False, capture=True)
+            cargo(
+                f"publish --quiet --locked --token {token}",
+                cwd=crate.path,
+                env=env,
+                dry_run=False,
+                capture=True,
+            )
             print(f"{G}Published{X} {B}{name}{X}@{B}{version}{X}")
             break
         except subprocess.CalledProcessError as e:
             error_message = e.stdout.decode("utf-8").strip()
-            if (retry_delay := parse_retry_delay_secs(error_message)) is not None and retry_attempts > 0:
+            # if we get a 429, parse the retry delay from it
+            # for any other error, retry after 6 seconds
+            retry_delay = 1 + (parse_retry_delay_secs(error_message) or 5.0)
+            if retry_attempts > 0:
                 print(f"{R}Failed to publish{X} {B}{name}{X}, retrying in {retry_delay} seconds…")
                 retry_attempts -= 1
+                retry_delay *= 1.5  # some backoff
                 time.sleep(retry_delay + 1)
             else:
                 print(f"{R}Failed to publish{X} {B}{name}{X}:\n{error_message}")
@@ -466,8 +478,8 @@ def publish_unpublished_crates_in_parallel(all_crates: dict[str, Crate], version
         dependency_graph[name] = dependencies
 
     # walk the dependency graph in parallel and publish each crate
-    print("Publishing crates…")
-    env = {**os.environ.copy(), "RERUN_IS_PUBLISHING": "yes"}
+    print(f"Publishing {len(unpublished_crates)} crates…")
+    env = {**os.environ.copy(), "RERUN_IS_PUBLISHING_CRATES": "yes"}
     DAG(dependency_graph).walk_parallel(
         lambda name: publish_crate(unpublished_crates[name], token, version, env),  # noqa: E731
         # 30 tokens per minute (burst limit in crates.io)
@@ -493,7 +505,7 @@ def publish(dry_run: bool, token: str) -> None:
         publish_unpublished_crates_in_parallel(crates, version, token)
 
 
-def get_latest_published_version(crate_name: str) -> str | None:
+def get_latest_published_version(crate_name: str, skip_prerelease: bool = False) -> str | None:
     resp = requests.get(
         f"https://crates.io/api/v1/crates/{crate_name}",
         headers={"user-agent": "rerun-publishing-script (rerun.io)"},
@@ -512,7 +524,15 @@ def get_latest_published_version(crate_name: str) -> str | None:
         return None
 
     # response orders versions by semver
-    return body["versions"][0]["num"]  # type: ignore [no-any-return]
+    versions = body["versions"]
+
+    if skip_prerelease:
+        for version in versions:
+            # no prerelease metadata
+            if "-" not in version["num"]:
+                return version["num"]
+    else:
+        return versions[0]["num"]  # type: ignore [no-any-return]
 
 
 class Target(Enum):
@@ -523,9 +543,18 @@ class Target(Enum):
         return self.value
 
 
-def get_version(target: Target | None) -> VersionInfo:
+def get_release_version_from_git_branch() -> str:
+    # TODO(ab): change this to s.removeprefix("release-") when we move to Python 3.9
+    s = git.Repo().active_branch.name
+    if s.startswith("release-"):
+        s = s[len("release-") :]
+
+    return s
+
+
+def get_version(target: Target | None, skip_prerelease: bool = False) -> VersionInfo:
     if target is Target.Git:
-        branch_name = git.Repo().active_branch.name.lstrip("release-")
+        branch_name = get_release_version_from_git_branch()
         try:
             current_version = VersionInfo.parse(branch_name)  # ensures that it is a valid version
         except ValueError:
@@ -533,7 +562,7 @@ def get_version(target: Target | None) -> VersionInfo:
             print("this script expects the format `release-x.y.z-meta.N`")
             exit(1)
     elif target is Target.CratesIo:
-        latest_published_version = get_latest_published_version("rerun")
+        latest_published_version = get_latest_published_version("rerun", skip_prerelease)
         if not latest_published_version:
             raise Exception("Failed to get latest published version for `rerun` crate")
         current_version = VersionInfo.parse(latest_published_version)
@@ -544,8 +573,36 @@ def get_version(target: Target | None) -> VersionInfo:
     return current_version
 
 
-def print_version(target: Target | None, finalize: bool = False, pre_id: bool = False) -> None:
-    current_version = get_version(target)
+def is_valid_version_string(version: str) -> bool:
+    # remove metadata -> split into digits
+    parts = version.split("-")[0].split(".")
+
+    if len(parts) != 3:
+        return False
+
+    for part in parts:
+        if not part.isdigit():
+            return False
+
+    return True
+
+
+def check_git_branch_name() -> None:
+    version = get_release_version_from_git_branch()
+
+    if is_valid_version_string(version):
+        print(f'"{version}" is a valid version string.')
+    else:
+        raise Exception(f'"{version}" is not a valid version string. See RELEASES.md for supported formats')
+
+
+def print_version(
+    target: Target | None,
+    finalize: bool = False,
+    pre_id: bool = False,
+    skip_prerelease: bool = False,
+) -> None:
+    current_version = get_version(target, skip_prerelease)
 
     if finalize:
         current_version = current_version.finalize_version()
@@ -565,8 +622,7 @@ def main() -> None:
     cmds_parser = parser.add_subparsers(title="cmds", dest="cmd")
 
     version_parser = cmds_parser.add_parser("version", help="Bump the crate versions")
-    target_version_parser = version_parser.add_mutually_exclusive_group()
-    target_version_update_group = target_version_parser.add_mutually_exclusive_group()
+    target_version_update_group = version_parser.add_mutually_exclusive_group()
     target_version_update_group.add_argument(
         "--bump", type=Bump, choices=list(Bump), help="Bump version according to semver"
     )
@@ -590,6 +646,8 @@ def main() -> None:
     publish_parser.add_argument("--dry-run", action="store_true", help="Display the execution plan")
     publish_parser.add_argument("--allow-dirty", action="store_true", help="Allow uncommitted changes")
 
+    cmds_parser.add_parser("check-git-branch-name", help="Check if the git branch name uses the correct format")
+
     get_version_parser = cmds_parser.add_parser("get-version", help="Get the current crate version")
     get_version_parser.add_argument(
         "--finalize", action="store_true", help="Return version finalized if it is a pre-release"
@@ -598,11 +656,16 @@ def main() -> None:
     get_version_parser.add_argument(
         "--from", type=Target, choices=list(Target), help="Get version from git or crates.io", dest="target"
     )
+    get_version_parser.add_argument(
+        "--skip-prerelease", action="store_true", help="If target is cratesio, return the first non-prerelease version"
+    )
 
     args = parser.parse_args()
 
+    if args.cmd == "check-git-branch-name":
+        check_git_branch_name()
     if args.cmd == "get-version":
-        print_version(args.target, args.finalize, args.pre_id)
+        print_version(args.target, args.finalize, args.pre_id, args.skip_prerelease)
     if args.cmd == "version":
         if args.dev and args.pre_id != "alpha":
             parser.error("`--pre-id` must be set to `alpha` when `--dev` is set")

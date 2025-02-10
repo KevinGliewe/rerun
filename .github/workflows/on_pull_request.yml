@@ -1,7 +1,8 @@
 # Jobs that only run for developers on the `rerun` team.
-# - We have to ensure that these jobs _only_ run for PRs inside the `rerun-io` organization
-#   this is done using the following check, added to every job:
+# We have to ensure that these jobs _only_ run for PRs inside the `rerun-io` organization
+# this is done using the following check, added to every job:
 #     if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
+# (unfortunately this does not work on the trigger or the entire `jobs` category)
 
 name: Pull-Request
 
@@ -11,6 +12,8 @@ on:
       - opened
       - synchronize
 
+permissions: write-all
+
 # These jobs use fairly short names as they are a prefix in the display hierarchy
 jobs:
   checks:
@@ -19,96 +22,157 @@ jobs:
     uses: ./.github/workflows/reusable_checks.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
+      CHANNEL: pr
     secrets: inherit
 
-  cpp-paths-filter:
+  paths-filter:
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
     runs-on: ubuntu-latest
     outputs:
       cpp_changes: ${{ steps.filter.outputs.cpp_changes }}
+      docs_changes: ${{ steps.filter.outputs.docs_changes }}
+      python_changes: ${{ steps.filter.outputs.python_changes }}
+      rust_changes: ${{ steps.filter.outputs.rust_changes }}
+      web_changes: ${{ steps.filter.outputs.web_changes }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || '' }}
-      - uses: dorny/paths-filter@v2
+      - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
             cpp_changes:
+              # - .github/**/*.yml  -  this is tempting, but leads to constant rebuilds
+              - pixi.lock # maybe out build commands have changed
+              - pixi.toml # maybe out build commands have changed
+              - scripts/ci/*
               - '**/*.hpp'
-              - '**/.cpp'
+              - '**/*.cpp'
               - '**/CMakeLists.txt'
+              - '**/*cmake'
+
+            docs_changes:
+              # - .github/**/*.yml  -  this is tempting, but leads to constant rebuilds
+              - .github/actions/vercel/**/*
+              - pixi.lock # maybe out build commands have changed
+              - pixi.toml # maybe out build commands have changed
+              - scripts/ci/*
+              - 'docs/content/**/*.md'
+              - 'examples/**/*.md'
+              - 'examples/manifest.toml'
+
+            python_changes:
+              # - .github/**/*.yml  -  this is tempting, but leads to constant rebuilds
+              - pixi.lock # maybe out build commands have changed
+              - pixi.toml # maybe out build commands have changed
+              - scripts/ci/*
+              - '**/*.py'
+              - '**/requirements.txt'
+              - '**/pyproject.toml'
+
+            rust_changes:
+              # - .github/**/*.yml  -  this is tempting, but leads to constant rebuilds
+              - Cargo.lock
+              - pixi.lock # maybe out build commands have changed
+              - pixi.toml # maybe out build commands have changed
+              - scripts/ci/*
+              - "**/*.rs"
+              - "**/*.toml"
+
+            web_changes:
+              # - .github/**/*.yml  -  this is tempting, but leads to constant rebuilds
+              - Cargo.lock
+              - pixi.lock # maybe out build commands have changed
+              - pixi.toml # maybe out build commands have changed
+              - scripts/ci/*
+              - "**/*.html"
+              - "**/*.js"
+              - "**/*.mjs"
+              - "**/*.json"
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/yarn.lock"
+              - "crates/viewer/re_ui/data/**"
+
+  rust-checks:
+    name: "Rust Checks"
+    needs: [paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && needs.paths-filter.outputs.rust_changes == 'true'
+    uses: ./.github/workflows/reusable_checks_rust.yml
+    with:
+      CONCURRENCY: pr-${{ github.event.pull_request.number }}
+      CHANNEL: pr
+    secrets: inherit
+
+  python-checks:
+    name: "Python Checks"
+    needs: [paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && needs.paths-filter.outputs.python_changes == 'true'
+    uses: ./.github/workflows/reusable_checks_python.yml
+    with:
+      CONCURRENCY: pr-${{ github.event.pull_request.number }}
+    secrets: inherit
 
   cpp-tests:
     name: "C++ tests"
-    # Wait for the cpp-paths-filter to be completed before starting.
-    needs: cpp-paths-filter
+    needs: [paths-filter]
+    if: needs.paths-filter.outputs.cpp_changes == 'true'
     uses: ./.github/workflows/reusable_checks_cpp.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      FULL: "${{ needs.cpp-paths-filter.outputs.cpp_changes }}"
+      CHANNEL: pr
     secrets: inherit
 
+  min-cli-build:
+    name: "Minimum CLI Build"
+    needs: [paths-filter]
+    if: needs.paths-filter.outputs.python_changes == 'true' || needs.paths-filter.outputs.rust_changes == 'true'
+    uses: ./.github/workflows/reusable_build_and_upload_rerun_cli.yml
+    with:
+      CONCURRENCY: pr-${{ github.event.pull_request.number }}
+      PLATFORM: linux-x64
+    secrets: inherit
+
+  # Build and test a single wheel to limit CI cost. We use linux-x64 because it's fast. linux-arm64 would also be a good
+  # choice, but reusable_test_wheels.yml is broken for that target (https://github.com/rerun-io/rerun/issues/5525)
   min-wheel-build:
     name: "Minimum Wheel Build"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
+    needs: [min-cli-build, paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && (needs.paths-filter.outputs.python_changes == 'true' || needs.paths-filter.outputs.rust_changes == 'true')
     uses: ./.github/workflows/reusable_build_and_upload_wheels.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
       MODE: "pr"
-      PLATFORM: linux
-      WHEEL_ARTIFACT_NAME: "linux-wheel-fast"
+      PLATFORM: linux-x64
+      WHEEL_ARTIFACT_NAME: "linux-x64-wheel-fast"
     secrets: inherit
 
   min-wheel-test:
     name: "Minimum Wheel Test"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [min-wheel-build]
+    needs: [min-wheel-build, paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && (needs.paths-filter.outputs.python_changes == 'true' || needs.paths-filter.outputs.rust_changes == 'true')
     uses: ./.github/workflows/reusable_test_wheels.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PLATFORM: linux
-      WHEEL_ARTIFACT_NAME: "linux-wheel-fast"
+      PLATFORM: linux-x64
+      WHEEL_ARTIFACT_NAME: "linux-x64-wheel-fast"
+      FAST: true
     secrets: inherit
 
   build-js:
-    name: "Build JS"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
+    name: "Build rerun_js"
+    needs: [paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && needs.paths-filter.outputs.web_changes == 'true'
     uses: ./.github/workflows/reusable_build_js.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
     secrets: inherit
 
-  build-rerun_c-and-upload:
-    name: "Build & Upload rerun_c (Linux x64)"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && !contains(github.event.pull_request.labels.*.name, 'release')
-    uses: ./.github/workflows/reusable_build_and_upload_rerun_c.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PLATFORM: linux
-    secrets: inherit
-
-  build-rerun-cli-and-upload:
-    name: "Build & Upload rerun-cli (Linux x64)"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && !contains(github.event.pull_request.labels.*.name, 'release')
-    uses: ./.github/workflows/reusable_build_and_upload_rerun_cli.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PLATFORM: linux
-    secrets: inherit
-
-  bundle-and-upload-rerun_cpp:
-    name: "Bundle and upload rerun_cpp_sdk.zip"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && !contains(github.event.pull_request.labels.*.name, 'release')
-    needs: [build-rerun_c-and-upload]
-    uses: ./.github/workflows/reusable_bundle_and_upload_rerun_cpp.yml
-    with:
-      PLATFORM_FILTER: "linux"
-    secrets: inherit
-
   build-web:
-    name: "Build Web"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
+    name: "Build web viewer"
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && needs.paths-filter.outputs.web_changes == 'true'
+    needs: [paths-filter]
     uses: ./.github/workflows/reusable_build_web.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
@@ -117,69 +181,19 @@ jobs:
 
   upload-web:
     name: "Upload Web"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
     needs: [build-web]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
     uses: ./.github/workflows/reusable_upload_web.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     secrets: inherit
 
-  build-examples:
-    name: "Build Examples"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [min-wheel-build]
-    uses: ./.github/workflows/reusable_build_examples.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      CHANNEL: main
-      WHEEL_ARTIFACT_NAME: linux-wheel-fast
-    secrets: inherit
-
-  track-sizes:
-    name: "Track Sizes"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [build-web, build-examples]
-    uses: ./.github/workflows/reusable_track_size.yml
-    with:
-      CONCURRENCY: push-${{ github.ref_name }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
-  upload-examples:
-    name: "Upload Examples"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [build-examples]
-    uses: ./.github/workflows/reusable_upload_examples.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
-  run-notebook:
-    name: "Run Notebook"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [min-wheel-build]
-    uses: ./.github/workflows/reusable_run_notebook.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      WHEEL_ARTIFACT_NAME: linux-wheel-fast
-    secrets: inherit
-
-  save-pr-summary:
-    name: "Save PR Summary"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    needs: [upload-web, run-notebook, build-rerun_c-and-upload]
-    uses: ./.github/workflows/reusable_pr_summary.yml
-    with:
-      CONCURRENCY: pr-${{ github.event.pull_request.number }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
-  update-pr-body:
-    name: "Update PR Body"
-    if: github.event.pull_request.head.repo.owner.login == 'rerun-io'
-    uses: ./.github/workflows/reusable_update_pr_body.yml
+  deploy-landing-preview:
+    name: "Deploy Landing Preview"
+    needs: [paths-filter]
+    if: github.event.pull_request.head.repo.owner.login == 'rerun-io' && needs.paths-filter.outputs.docs_changes == 'true'
+    uses: ./.github/workflows/reusable_deploy_landing_preview.yml
     with:
       CONCURRENCY: pr-${{ github.event.pull_request.number }}
       PR_NUMBER: ${{ github.event.pull_request.number }}

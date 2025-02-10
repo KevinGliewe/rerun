@@ -4,9 +4,8 @@ import itertools
 
 import numpy as np
 import rerun as rr
-from rerun.components import PinholeProjectionBatch, ResolutionBatch, ViewCoordinatesBatch, ViewCoordinatesLike
-from rerun.datatypes.mat3x3 import Mat3x3Like
-from rerun.datatypes.vec2d import Vec2DLike
+from rerun.components import PinholeProjectionBatch, ResolutionBatch, ViewCoordinatesBatch
+from rerun.datatypes import Mat3x3Like, Vec2DLike, ViewCoordinatesLike
 
 
 def test_pinhole() -> None:
@@ -38,9 +37,9 @@ def test_pinhole() -> None:
         arch = rr.Pinhole(image_from_camera=image_from_camera, resolution=resolution, camera_xyz=camera_xyz)
         print(f"{arch}\n")
 
-        assert arch.image_from_camera == PinholeProjectionBatch._optional([1, 2, 3, 4, 5, 6, 7, 8, 9])
-        assert arch.resolution == ResolutionBatch._optional([1, 2] if resolution is not None else None)
-        assert arch.camera_xyz == ViewCoordinatesBatch._optional(
+        assert arch.image_from_camera == PinholeProjectionBatch._converter([1, 2, 3, 4, 5, 6, 7, 8, 9])
+        assert arch.resolution == ResolutionBatch._converter([1, 2] if resolution is not None else None)
+        assert arch.camera_xyz == ViewCoordinatesBatch._converter(
             rr.components.ViewCoordinates.RDF if camera_xyz is not None else None
         )
 

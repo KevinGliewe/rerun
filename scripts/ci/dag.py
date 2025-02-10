@@ -15,7 +15,7 @@ class RateLimiter:
 
     Starts at `max_tokens`, and refills one token every `refill_interval_sec / max_tokens`.
 
-    This implementation attempts to mimic https://github.com/rust-lang/crates.io/blob/e66c852d3db3f0dfafa1f9a01e7806f0b2ad1465/src/rate_limiter.rs
+    This implementation attempts to mimic <https://github.com/rust-lang/crates.io/blob/e66c852d3db3f0dfafa1f9a01e7806f0b2ad1465/src/rate_limiter.rs>
     """
 
     def __init__(self, max_tokens: int, refill_interval_sec: float):
@@ -162,6 +162,8 @@ class _State(Generic[_T]):
 
         self._queue.extend(state.node for state in self._node_states.values() if state.pending_dependencies == 0)
 
+        assert len(self._node_states) == 0 or 0 < len(self._queue), "No sources in DAG - we have a cyclic dependency!"
+
     def _get_or_insert(self, node: _T) -> _NodeState[_T]:
         if node not in self._node_states:
             self._node_states[node] = _NodeState(node)
@@ -204,14 +206,12 @@ def main() -> None:
     #   Processed B at T+0.5
     #   Processed D at T+1
     # `A` and `C` may swap places.
-    dag = DAG(
-        {
-            "A": [],
-            "B": ["A"],
-            "C": [],
-            "D": ["A", "B", "C"],
-        }
-    )
+    dag = DAG({
+        "A": [],
+        "B": ["A"],
+        "C": [],
+        "D": ["A", "B", "C"],
+    })
 
     # `walk_parallel` can be called multiple times
     dag.walk_parallel(

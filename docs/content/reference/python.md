@@ -1,5 +1,5 @@
 ---
 title: 🐍 Python APIs
-order: 10
+order: 2100
 redirect: https://ref.rerun.io/docs/python
 ---

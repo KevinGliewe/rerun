@@ -24,7 +24,6 @@ def main() -> None:
     draw_order = 300
     class_ids = np.array([126, 127], dtype=np.uint64)
     keypoint_ids = np.array([2, 3], dtype=np.uint64)
-    instance_keys = np.array([66, 666], dtype=np.uint64)
 
     points2d = rr.Points2D(
         points,
@@ -34,7 +33,6 @@ def main() -> None:
         draw_order=draw_order,
         class_ids=class_ids,
         keypoint_ids=keypoint_ids,
-        instance_keys=instance_keys,
     )
 
     parser = argparse.ArgumentParser(description="Logs rich data using the Rerun SDK.")
@@ -44,7 +42,7 @@ def main() -> None:
     rr.script_setup(args, "rerun_example_roundtrip_points2d")
 
     rr.log("points2d", points2d)
-    # Hack to establish 2d view bounds
+    # Hack to establish 2D view bounds
     rr.log("rect", rr.Boxes2D(half_sizes=[2.0, 3.0], centers=[2.0, 3.0]))
 
     rr.script_teardown(args)

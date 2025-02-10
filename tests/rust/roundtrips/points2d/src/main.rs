@@ -21,11 +21,10 @@ fn run(rec: &RecordingStream, _args: &Args) -> anyhow::Result<()> {
             .with_labels(["hello", "friend"])
             .with_draw_order(300.0)
             .with_class_ids([126, 127])
-            .with_keypoint_ids([2, 3])
-            .with_instance_keys([66, 666]),
+            .with_keypoint_ids([2, 3]),
     )?;
 
-    // Hack to establish 2d view bounds
+    // Hack to establish 2D view bounds
     rec.log(
         "rect",
         &Boxes2D::from_mins_and_sizes([(0.0, 0.0)], [(4.0, 6.0)]),

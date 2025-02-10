@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import components, datatypes
+from .. import datatypes
 from ..error_utils import catch_and_log_exceptions
 
 
@@ -13,12 +13,12 @@ class Points3DExt:
         self: Any,
         positions: datatypes.Vec3DArrayLike,
         *,
-        radii: components.RadiusArrayLike | None = None,
+        radii: datatypes.Float32ArrayLike | None = None,
         colors: datatypes.Rgba32ArrayLike | None = None,
         labels: datatypes.Utf8ArrayLike | None = None,
+        show_labels: datatypes.BoolLike | None = None,
         class_ids: datatypes.ClassIdArrayLike | None = None,
         keypoint_ids: datatypes.KeypointIdArrayLike | None = None,
-        instance_keys: components.InstanceKeyArrayLike | None = None,
     ):
         """
         Create a new instance of the Points3D archetype.
@@ -36,6 +36,8 @@ class Points3DExt:
              As either 0-1 floats or 0-255 integers, with separate alpha.
         labels:
              Optional text labels for the points.
+        show_labels:
+            Optional choice of whether the text labels should be shown by default.
         class_ids:
              Optional class Ids for the points.
 
@@ -49,8 +51,7 @@ class Points3DExt:
              with `class_id`).
              E.g. the classification might be 'Person' and the keypoints refer to joints on a
              detected skeleton.
-        instance_keys:
-             Unique identifiers for each individual point in the batch.
+
         """
 
         with catch_and_log_exceptions(context=self.__class__.__name__):
@@ -62,9 +63,9 @@ class Points3DExt:
                 radii=radii,
                 colors=colors,
                 labels=labels,
+                show_labels=show_labels,
                 class_ids=class_ids,
                 keypoint_ids=keypoint_ids,
-                instance_keys=instance_keys,
             )
             return
         self.__attrs_clear__()

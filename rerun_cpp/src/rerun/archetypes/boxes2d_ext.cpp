@@ -11,21 +11,18 @@ namespace rerun {
         // <CODEGEN_COPY_TO_HEADER>
 
         /// Creates new `Boxes2D` with `half_sizes` centered around the local origin.
-        static Boxes2D from_half_sizes(Collection<components::HalfSizes2D> half_sizes) {
-            Boxes2D boxes;
-            boxes.half_sizes = std::move(half_sizes);
-            return boxes;
+        static Boxes2D from_half_sizes(Collection<components::HalfSize2D> half_sizes) {
+            return Boxes2D().with_half_sizes(std::move(half_sizes));
         }
 
         /// Creates new `Boxes2D` with `centers` and `half_sizes`.
         static Boxes2D from_centers_and_half_sizes(
             Collection<components::Position2D> centers,
-            Collection<components::HalfSizes2D> half_sizes
+            Collection<components::HalfSize2D> half_sizes
         ) {
-            Boxes2D boxes;
-            boxes.half_sizes = std::move(half_sizes);
-            boxes.centers = std::move(centers);
-            return boxes;
+            return Boxes2D()
+                .with_half_sizes(std::move(half_sizes))
+                .with_centers(std::move(centers));
         }
 
         /// Creates new `Boxes2D` with `half_sizes` created from (full) sizes.
@@ -42,9 +39,7 @@ namespace rerun {
         static Boxes2D from_centers_and_sizes(
             Collection<components::Position2D> centers, const std::vector<datatypes::Vec2D>& sizes
         ) {
-            Boxes2D boxes = from_sizes(std::move(sizes));
-            boxes.centers = std::move(centers);
-            return boxes;
+            return from_sizes(std::move(sizes)).with_centers(std::move(centers));
         }
 
         /// Creates new `Boxes2D` with `half_sizes` and `centers` created from minimums and (full)
@@ -59,7 +54,7 @@ namespace rerun {
         // </CODEGEN_COPY_TO_HEADER>
 #endif
         Boxes2D Boxes2D::from_sizes(const std::vector<datatypes::Vec2D>& sizes) {
-            std::vector<components::HalfSizes2D> half_sizes;
+            std::vector<components::HalfSize2D> half_sizes;
             half_sizes.reserve(sizes.size());
             for (const auto& size : sizes) {
                 half_sizes.emplace_back(size.x() / 2.0f, size.y() / 2.0f);
@@ -74,7 +69,7 @@ namespace rerun {
         ) {
             auto num_components = std::min(mins.size(), sizes.size());
 
-            std::vector<components::HalfSizes2D> half_sizes;
+            std::vector<components::HalfSize2D> half_sizes;
             std::vector<components::Position2D> centers;
             half_sizes.reserve(num_components);
             centers.reserve(num_components);
@@ -87,10 +82,9 @@ namespace rerun {
                 centers.emplace_back(mins[i].x() + half_size_x, mins[i].y() + half_size_y);
             }
 
-            Boxes2D boxes;
-            boxes.half_sizes = std::move(half_sizes);
-            boxes.centers = std::move(centers);
-            return boxes;
+            return Boxes2D()
+                .with_half_sizes(std::move(half_sizes))
+                .with_centers(std::move(centers));
         }
     } // namespace archetypes
 } // namespace rerun

@@ -1,5 +1,10 @@
 #include "resolution.hpp"
 
+// <CODEGEN_COPY_TO_HEADER>
+#include "../rerun_sdk_export.hpp"
+
+// </CODEGEN_COPY_TO_HEADER>
+
 // Uncomment for better auto-complete while editing the extension.
 // #define EDIT_EXTENSION
 
@@ -12,8 +17,6 @@ namespace rerun {
 #define Resolution ResolutionExt
 
             // <CODEGEN_COPY_TO_HEADER>
-
-            static const Resolution IDENTITY;
 
             /// Construct resolution from width and height floats.
             Resolution(float width, float height) : resolution{width, height} {}

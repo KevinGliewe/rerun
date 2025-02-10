@@ -28,27 +28,28 @@ examples/
         main.rs
 ```
 
-The important part is that each example has a `README.md` file. This file contains a brief description of the example, as well as installation/usage instructions. The `README.md` file also contains metadata in the form of frontmatter:
+The important part is that each example has a `README.md` file. The contents of this `README.md` is used to render the examples in [the documentation](https://rerun.io/examples).
+Check out [`examples/python/template/README.md`](python/template/README.md) to see its format.
+
+You are also encourage to add a _short_ `DESCRIPTION = """…"""` markdown to the top of the `main.py` and then log it with:
+```py
+rr.log("description", rr.TextDocument(DESCRIPTION, media_type=rr.MediaType.MARKDOWN), static=True)
 ```
----
-title: Text Logging
-python: https://github.com/rerun-io/rerun/tree/latest/examples/python/detect_and_track_objects/main.py
-tags: [2D, huggingface, object-detection, object-tracking, opencv]
----
-
-…
-```
-
-The contents of this `README.md` file and its frontmatter are used to render the examples in [the documentation](https://rerun.io/examples). Individual examples are currently "stitched together" to form one large markdown file for every category of examples (`artificial-data`, `real-data`).
-
-The `manifest.toml` file describes the structure of the examples contained in this repository. Only the examples which appear in the manifest are included in the [generated documentation](https://rerun.io/examples). The file contains a description of its own format.
 
 ## Adding a new example
 
 You can base your example off of `python/template` or `rust/template`.
 Once it's ready to be displayed in the docs, add it to the [manifest](./manifest.toml).
 
+The `manifest.toml` file describes the structure of the examples contained in this repository. Only the examples which appear in the manifest are included in the [generated documentation](https://rerun.io/examples). The file contains a description of its own format.
+
 If you want to run the example on CI and include it in the in-viewer example page,
 add a `channel` entry to its README frontmatter. The available channels right now are:
-- `main` for simple/fast examples built on each PR and the `main` branch
+- `main` for simple/fast examples built on each merge to `main`
 - `nightly` for heavier examples built once per day
+- `release` for very heavy examples built once per release
+
+These channels are defined in: https://github.com/rerun-io/rerun/blob/18189a436271d58efe55a9c58fb3ff4d29098fd2/crates/build/re_dev_tools/src/build_examples/example.rs#L150-L158
+
+
+If `channel` is missing, the example is never built on CI.

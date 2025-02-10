@@ -15,10 +15,9 @@ int main(int, char** argv) {
             .with_draw_order(300.0)
             .with_class_ids({126, 127})
             .with_keypoint_ids({2, 3})
-            .with_instance_keys({66, 666})
     );
 
-    // Hack to establish 2d view bounds
+    // Hack to establish 2D view bounds
     rec.log(
         "rect",
         rerun::archetypes::Boxes2D::from_mins_and_sizes({{0.0f, 0.0f}}, {{4.0f, 6.0f}})

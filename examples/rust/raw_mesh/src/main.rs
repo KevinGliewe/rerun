@@ -11,11 +11,7 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use rerun::{
-    components::{MeshProperties, Transform3D},
-    external::{ecolor, re_log},
-    Color, Mesh3D, RecordingStream,
-};
+use rerun::{external::re_log, Color, Mesh3D, RecordingStream, Rgba32};
 
 // TODO(cmc): This example needs to support animations to showcase Rerun's time capabilities.
 
@@ -39,8 +35,7 @@ impl From<GltfPrimitive> for Mesh3D {
         if let Some(indices) = indices {
             assert!(indices.len() % 3 == 0);
             let triangle_indices = indices.chunks_exact(3).map(|tri| (tri[0], tri[1], tri[2]));
-            mesh =
-                mesh.with_mesh_properties(MeshProperties::from_triangle_indices(triangle_indices));
+            mesh = mesh.with_triangle_indices(triangle_indices);
         }
         if let Some(vertex_normals) = vertex_normals {
             mesh = mesh.with_vertex_normals(vertex_normals);
@@ -51,11 +46,8 @@ impl From<GltfPrimitive> for Mesh3D {
         if let Some(vertex_texcoords) = vertex_texcoords {
             mesh = mesh.with_vertex_texcoords(vertex_texcoords);
         }
-        if albedo_factor.is_some() {
-            mesh = mesh.with_mesh_material(rerun::datatypes::Material {
-                albedo_factor: albedo_factor
-                    .map(|[r, g, b, a]| ecolor::Rgba::from_rgba_unmultiplied(r, g, b, a).into()),
-            });
+        if let Some([r, g, b, a]) = albedo_factor {
+            mesh = mesh.with_albedo_factor(Rgba32::from_linear_unmultiplied_rgba_f32(r, g, b, a));
         }
 
         mesh.sanity_check().unwrap();
@@ -65,9 +57,9 @@ impl From<GltfPrimitive> for Mesh3D {
 }
 
 // Declare how to turn a glTF transform into a Rerun component (`Transform`).
-impl From<GltfTransform> for Transform3D {
+impl From<GltfTransform> for rerun::Transform3D {
     fn from(transform: GltfTransform) -> Self {
-        Transform3D::from_translation_rotation_scale(
+        rerun::Transform3D::from_translation_rotation_scale(
             transform.t,
             rerun::datatypes::Quaternion::from_xyzw(transform.r),
             transform.s,
@@ -79,11 +71,8 @@ impl From<GltfTransform> for Transform3D {
 fn log_node(rec: &RecordingStream, node: GltfNode) -> anyhow::Result<()> {
     rec.set_time_sequence("keyframe", 0);
 
-    if let Some(transform) = node.transform.map(Transform3D::from) {
-        rec.log(
-            node.name.as_str(),
-            &rerun::archetypes::Transform3D::new(transform),
-        )?;
+    if let Some(transform) = node.transform.map(rerun::Transform3D::from) {
+        rec.log(node.name.as_str(), &transform)?;
     }
 
     // Convert glTF objects into Rerun components.
@@ -148,7 +137,7 @@ impl Args {
             anyhow::bail!(
                 "Could not load the scene, have you downloaded the dataset? \
                 Try running the python version first to download it automatically \
-                (`examples/python/raw_mesh/main.py --scene {scene_name}`).",
+                (`python -m raw_mesh --scene {scene_name}`).",
             )
         }
 
@@ -164,7 +153,10 @@ fn run(rec: &RecordingStream, args: &Args) -> anyhow::Result<()> {
     // Log raw glTF nodes and their transforms with Rerun
     for root in nodes {
         re_log::info!(scene = root.name, "logging glTF scene");
-        rec.log_timeless(root.name.as_str(), &rerun::ViewCoordinates::RIGHT_HAND_Y_UP)?;
+        rec.log_static(
+            root.name.as_str(),
+            &rerun::ViewCoordinates::RIGHT_HAND_Y_UP(),
+        )?;
         log_node(rec, root)?;
     }
 

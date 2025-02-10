@@ -9,30 +9,29 @@ import rerun as rr
 from rerun.components import (
     Color,
     ColorBatch,
-    InstanceKeyArrayLike,
     Position3DBatch,
-    RadiusArrayLike,
 )
-from rerun.datatypes import ClassIdArrayLike, KeypointIdArrayLike, Rgba32ArrayLike, Utf8ArrayLike, Vec3DArrayLike
+from rerun.datatypes import (
+    ClassIdArrayLike,
+    Float32ArrayLike,
+    KeypointIdArrayLike,
+    Rgba32ArrayLike,
+    Utf8ArrayLike,
+    Vec3DArrayLike,
+)
 
 from .common_arrays import (
     class_ids_arrays,
     class_ids_expected,
     colors_arrays,
     colors_expected,
-    instance_keys_arrays,
-    instance_keys_expected,
     keypoint_ids_arrays,
     keypoint_ids_expected,
     labels_arrays,
     labels_expected,
     radii_arrays,
     radii_expected,
-)
-from .common_arrays import (
     vec3ds_arrays as positions_arrays,
-)
-from .common_arrays import (
     vec3ds_expected as positions_expected,
 )
 
@@ -45,20 +44,18 @@ def test_points3d() -> None:
         labels_arrays,
         class_ids_arrays,
         keypoint_ids_arrays,
-        instance_keys_arrays,
     )
 
-    for positions, radii, colors, labels, class_ids, keypoint_ids, instance_keys in all_arrays:
+    for positions, radii, colors, labels, class_ids, keypoint_ids in all_arrays:
         positions = positions if positions is not None else positions_arrays[-1]
 
         # make Pyright happy as it's apparently not able to track typing info trough zip_longest
         positions = cast(Vec3DArrayLike, positions)
-        radii = cast(Optional[RadiusArrayLike], radii)
+        radii = cast(Optional[Float32ArrayLike], radii)
         colors = cast(Optional[Rgba32ArrayLike], colors)
         labels = cast(Optional[Utf8ArrayLike], labels)
         class_ids = cast(Optional[ClassIdArrayLike], class_ids)
         keypoint_ids = cast(Optional[KeypointIdArrayLike], keypoint_ids)
-        instance_keys = cast(Optional[InstanceKeyArrayLike], instance_keys)
 
         print(
             f"rr.Points3D(\n"
@@ -68,7 +65,6 @@ def test_points3d() -> None:
             f"    labels={labels!r}\n"
             f"    class_ids={class_ids!r}\n"
             f"    keypoint_ids={keypoint_ids!r}\n"
-            f"    instance_keys={instance_keys!r}\n"
             f")"
         )
         arch = rr.Points3D(
@@ -78,7 +74,6 @@ def test_points3d() -> None:
             labels=labels,
             class_ids=class_ids,
             keypoint_ids=keypoint_ids,
-            instance_keys=instance_keys,
         )
         print(f"{arch}\n")
 
@@ -88,7 +83,6 @@ def test_points3d() -> None:
         assert arch.labels == labels_expected(labels)
         assert arch.class_ids == class_ids_expected(class_ids)
         assert arch.keypoint_ids == keypoint_ids_expected(keypoint_ids)
-        assert arch.instance_keys == instance_keys_expected(instance_keys)
 
 
 @pytest.mark.parametrize(
@@ -130,12 +124,10 @@ def test_point3d_single_color(data: Rgba32ArrayLike) -> None:
 def test_point3d_multiple_colors(data: Rgba32ArrayLike) -> None:
     pts = rr.Points3D(positions=np.zeros((5, 3)), colors=data)
 
-    assert pts.colors == ColorBatch(
-        [
-            Color([0, 128, 0, 255]),
-            Color([128, 0, 0, 255]),
-        ]
-    )
+    assert pts.colors == ColorBatch([
+        Color([0, 128, 0, 255]),
+        Color([128, 0, 0, 255]),
+    ])
 
 
 if __name__ == "__main__":

@@ -7,16 +7,19 @@ function(download_and_build_arrow)
 
     set(ARROW_DOWNLOAD_PATH ${CMAKE_BINARY_DIR}/arrow)
 
+    set(ARROW_LIB_PATH ${ARROW_DOWNLOAD_PATH}/lib)
+    set(ARROW_BIN_PATH ${ARROW_DOWNLOAD_PATH}/bin)
+
     if(RERUN_ARROW_LINK_SHARED)
         set(ARROW_BUILD_SHARED ON)
         set(ARROW_BUILD_STATIC OFF)
 
         if(APPLE)
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow.dylib)
+            set(ARROW_LIBRARY_FILE ${ARROW_LIB_PATH}/libarrow.dylib)
         elseif(UNIX) # if(LINUX) # CMake 3.25
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow.so)
+            set(ARROW_LIBRARY_FILE ${ARROW_LIB_PATH}/libarrow.so)
         elseif(WIN32)
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/bin/arrow.dll)
+            set(ARROW_LIBRARY_FILE ${ARROW_BIN_PATH}/arrow.dll)
         else()
             message(FATAL_ERROR "Unsupported platform.")
         endif()
@@ -25,14 +28,14 @@ function(download_and_build_arrow)
         set(ARROW_BUILD_STATIC ON)
 
         if(APPLE)
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow.a)
+            set(ARROW_LIBRARY_FILE ${ARROW_LIB_PATH}/libarrow.a)
             set(ARROW_BUNDLED_DEPENDENCIES_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow_bundled_dependencies.a)
         elseif(UNIX) # if(LINUX) # CMake 3.25
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow.a)
-            set(ARROW_BUNDLED_DEPENDENCIES_FILE ${ARROW_DOWNLOAD_PATH}/lib/libarrow_bundled_dependencies.a)
+            set(ARROW_LIBRARY_FILE ${ARROW_LIB_PATH}/libarrow.a)
+            set(ARROW_BUNDLED_DEPENDENCIES_FILE ${ARROW_LIB_PATH}/libarrow_bundled_dependencies.a)
         elseif(WIN32)
-            set(ARROW_LIBRARY_FILE ${ARROW_DOWNLOAD_PATH}/lib/arrow_static.lib)
-            set(ARROW_BUNDLED_DEPENDENCIES_FILE ${ARROW_DOWNLOAD_PATH}/lib/arrow_bundled_dependencies.lib)
+            set(ARROW_LIBRARY_FILE ${ARROW_LIB_PATH}/arrow_static.lib)
+            set(ARROW_BUNDLED_DEPENDENCIES_FILE ${ARROW_LIB_PATH}/arrow_bundled_dependencies.lib)
         else()
             message(FATAL_ERROR "Unsupported platform.")
         endif()
@@ -68,23 +71,23 @@ function(download_and_build_arrow)
         arrow_cpp
         PREFIX ${ARROW_DOWNLOAD_PATH}
         GIT_REPOSITORY https://github.com/apache/arrow.git
-        GIT_TAG apache-arrow-10.0.1
+        GIT_TAG apache-arrow-18.0.0
         GIT_SHALLOW ON
-        GIT_PROGRESS OFF # Git progress sounds like a nice idea but is in practive very spammy.
+        GIT_PROGRESS OFF # Git progress sounds like a nice idea but is in practice very spammy.
 
         # LOG_X ON means that the output of the command will
         # be logged to a file _instead_ of printed to the console.
         LOG_CONFIGURE ON
         LOG_BUILD ON
         LOG_INSTALL ON
-
         CMAKE_ARGS
         --preset ${ARROW_CMAKE_PRESET}
         -DARROW_BOOST_USE_SHARED=OFF
         -DARROW_BUILD_SHARED=${ARROW_BUILD_SHARED}
         -DARROW_BUILD_STATIC=${ARROW_BUILD_STATIC}
         -DARROW_CXXFLAGS=${ARROW_CXXFLAGS}
-        -DARROW_IPC=OFF
+        -DARROW_COMPUTE=OFF
+        -DARROW_IPC=ON # Needed due to: https://github.com/apache/arrow/issues/44563
         -DARROW_JEMALLOC=OFF # We encountered some build issues with jemalloc, use mimalloc instead.
         -DARROW_MIMALLOC=ON
         -DARROW_USE_ASAN=${ARROW_ASAN}
@@ -92,9 +95,12 @@ function(download_and_build_arrow)
         -DARROW_USE_UBSAN=OFF
         -DBOOST_SOURCE=BUNDLED
         -DCMAKE_INSTALL_PREFIX=${ARROW_DOWNLOAD_PATH}
+        -DCMAKE_INSTALL_LIBDIR=lib
+        -DCMAKE_INSTALL_BINDIR=bin
         -Dxsimd_SOURCE=BUNDLED
         -DBOOST_SOURCE=BUNDLED
         -DARROW_BOOST_USE_SHARED=OFF
+        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} # Specify the toolchain file for cross-compilation (see https://github.com/rerun-io/rerun/issues/7445)
         SOURCE_SUBDIR cpp
         BUILD_BYPRODUCTS ${ARROW_LIBRARY_FILE} ${ARROW_BUNDLED_DEPENDENCIES_FILE}
     )

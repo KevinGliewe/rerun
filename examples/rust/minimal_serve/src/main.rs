@@ -3,12 +3,8 @@
 use rerun::{demo_util::grid, external::glam};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // `serve()` requires to have a running Tokio runtime in the current context.
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let _guard = rt.enter();
-
     let open_browser = true;
-    let rec = rerun::RecordingStreamBuilder::new("rerun_example_minimal_serve").serve(
+    let rec = rerun::RecordingStreamBuilder::new("rerun_example_minimal_serve").serve_web(
         "0.0.0.0",
         Default::default(),
         Default::default(),

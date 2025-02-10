@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from .. import components, datatypes
+from .. import datatypes
 from ..error_utils import catch_and_log_exceptions
 
 
@@ -44,12 +44,12 @@ class Boxes2DExt:
         centers: datatypes.Vec2DArrayLike | None = None,
         array: npt.ArrayLike | None = None,
         array_format: Box2DFormat | None = None,
-        radii: components.RadiusArrayLike | None = None,
+        radii: datatypes.Float32ArrayLike | None = None,
         colors: datatypes.Rgba32ArrayLike | None = None,
         labels: datatypes.Utf8ArrayLike | None = None,
-        draw_order: components.DrawOrderLike | None = None,
+        show_labels: datatypes.BoolLike | None = None,
+        draw_order: datatypes.Float32ArrayLike | None = None,
         class_ids: datatypes.ClassIdArrayLike | None = None,
-        instance_keys: components.InstanceKeyArrayLike | None = None,
     ) -> None:
         """
         Create a new instance of the Boxes2D archetype.
@@ -80,6 +80,8 @@ class Boxes2DExt:
             Optional radii for the lines that make up the boxes.
         labels:
             Optional text labels for the boxes.
+        show_labels:
+            Optional choice of whether the text labels should be shown by default.
         draw_order:
             An optional floating point value that specifies the 2D drawing order.
             Objects with higher values are drawn on top of those with lower values.
@@ -89,8 +91,7 @@ class Boxes2DExt:
             Optional `ClassId`s for the boxes.
 
             The class ID provides colors and labels if not specified explicitly.
-        instance_keys:
-            Unique identifiers for each individual boxes in the batch.
+
         """
 
         with catch_and_log_exceptions(context=self.__class__.__name__):
@@ -166,9 +167,9 @@ class Boxes2DExt:
                 radii=radii,
                 colors=colors,
                 labels=labels,
+                show_labels=show_labels,
                 draw_order=draw_order,
                 class_ids=class_ids,
-                instance_keys=instance_keys,
             )
             return
 

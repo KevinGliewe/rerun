@@ -1,4 +1,4 @@
-# Blueprint Operation: APIs and Datastore
+# Blueprint operation: APIs and datastore
 Status: proposal
 
 ## Intro
@@ -21,20 +21,20 @@ give users explicit control over the details of how data is displayed in the vie
 ### UI state includes:
 
 - Is the selection panel open? how wide?
-- How are my space views organized?
-- What data is shown in each space view
-- Additional configuration / overrides for the data within each space view
+- How are my views organized?
+- What data is shown in each view
+- Additional configuration / overrides for the data within each view
 
 ## Proposal
 
-### Blueprint Lifecycle
-In order to simplify many edge cases, custom blueprints will only be able to be sent to the viewer in their entirety as
-part of viewer startup. This limits blueprint control to: `rr.spawn()` (launch a native app), `rr.serve()` (launch a
-hosted web-app), and `rr.show()` (embed a viewer in a notebook). Additionally a blueprint file will be able to be
-provided to the viewer via the CLI at launch, or opened via the file-menu.
+### Blueprint lifecycle
+In order to simplify many edge cases, custom blueprints will only be able to be sent to the Viewer in their entirety as
+part of Viewer startup. This limits blueprint control to: `rr.spawn()` (launch a native app), `rr.serve()` (launch a
+hosted web-app), and `rr.show()` (embed a Viewer in a notebook). Additionally a blueprint file will be able to be
+provided to the Viewer via the CLI at launch, or opened via the file-menu.
 
 Blueprints will not otherwise be able to be sent via `rr.connect()`, which is reserved for only transmitting log-data to
-an existing live viewer instance, where a relevant blueprint is assumed to be loaded.
+an existing live Viewer instance, where a relevant blueprint is assumed to be loaded.
 
 ### Blueprint APIs
 
@@ -63,7 +63,7 @@ App:
             …
 ```
 
-A theoretical python API might look like:
+A theoretical Python API might look like:
 ```python
 blueprint = rrb.App(
     expand_panels=False,
@@ -111,8 +111,8 @@ The assorted objects used in blueprint construction are:
         - `View2D`
         - `View3D`
         - `ViewTimeSeries`
-        - … additional space-views
- - `Data`: A query that builds archetypes to draw in the space view
+        - … additional views
+ - `Data`: A query that builds archetypes to draw in the view
     - `Auto`: A query to automatically build archetypes from an entity path
     - `Points2D`: A query to build a Points2D archetype
     - `Points3D`: A query to build a Points3D archetype
@@ -131,20 +131,20 @@ particular:
 
 This means a trivial expression like: `rr.show(rrb.Points3D("points"))` is still a valid Blueprint.
 
-## Blueprint-Static Data
+## Blueprint-Static data
 
 As a further simplification, the Blueprint will allow for the direct inclusion of static data, allowing users to bypass
 the data-logging APIs entirely for simple use-cases that don't require temporal information. This will be accomplished
 by allowing `rrb.Data` objects to be constructed from any Rerun-loggable object.
 
-Data that is a *query* from the recording store references an entity path used seprately by the logging APIs:
+Data that is a *query* from the recording store references an entity path used separately by the logging APIs:
 ```python
-# Log Data
+# Log data
 for t in range(100):
     rr.set_time('step', t)
     rr.log("world/points", rr.Points3D(points))
 …
-# Construct Blueprint
+# Construct blueprint
 rrb.Auto("/world/points")
 ```
 While static data skips the logging step all together, but only allows for a single element:
@@ -166,7 +166,7 @@ grid = rrd.GridLayout(cols=3, [rr.Image(img) for img in images])
 Note the usage of `rr.Image` (the loggable) vs `rrb.Image` (the blueprint template).
 
 
-## Blueprint Store
+## Blueprint store
 
 Behind the APIs, the blueprint is implemented using a “blueprint store” that leverages the same code as the existing
 data-store. We will therefore have both “data entities” and “blueprint entities”.
@@ -219,13 +219,13 @@ is simply stored at an "anonymous" entity path within the blueprint store and wi
 The blueprint store has exactly one timeline: `ui_time` which is the local time of the application. This can then be used for undo and redo.
 
 ## Viewer
-Any configurable viewer state will be driven by the blueprint store and the data store. Each frame we will
+Any configurable Viewer state will be driven by the blueprint store and the data store. Each frame we will
 query the blueprint store about the current state of the blueprint, which will then drive the layout of the UI.
 In turn any user-interactions that modify the layout will be saved back to the blueprint store and queried again
 on the next frame.
 
 ### UI components
-The ui components are quite specific for the type of blueprint. Here are a few example:
+The UI components are quite specific for the type of blueprint. Here are a few example:
 
 * `root`:
     * `TimeControl` (globally selected timeline, time, play state, etc)
@@ -245,9 +245,9 @@ The ui components are quite specific for the type of blueprint. Here are a few e
     * `children`
     * `type`: "horizontal", "vertical", "auto", …
     * `sizes`: individual sizes of the children
-* Space view
+* View
     * `children` (data blueprints)
-    * `category` ("3d", "text", …)
+    * `category` ("3D", "text", …)
 * Data group
     * `children`
 * Data

@@ -27,7 +27,7 @@ def load_urdf_from_msg(msg: String) -> URDF:
     return URDF.load(f, filename_handler=ament_locate_package)
 
 
-def log_scene(scene: trimesh.Scene, node: str, path: str | None = None, timeless: bool = False) -> None:
+def log_scene(scene: trimesh.Scene, node: str, path: str | None = None, static: bool = False) -> None:
     """Log a trimesh scene to rerun."""
     path = path + "/" + node if path else node
 
@@ -46,7 +46,7 @@ def log_scene(scene: trimesh.Scene, node: str, path: str | None = None, timeless
                     translation=world_from_mesh[3, 0:3],
                     mat3x3=world_from_mesh[0:3, 0:3],
                 ),
-                timeless=timeless,
+                static=static,
             )
 
         # Log this node's mesh, if it has one.
@@ -54,11 +54,11 @@ def log_scene(scene: trimesh.Scene, node: str, path: str | None = None, timeless
         if mesh:
             # If vertex colors are set, use the average color as the albedo factor
             # for the whole mesh.
-            vertex_colors = None
+            mean_vertex_color = None
             try:
                 colors = np.mean(mesh.visual.vertex_colors, axis=0)
                 if len(colors) == 4:
-                    vertex_colors = np.array(colors) / 255.0
+                    mean_vertex_color = np.array(colors) / 255.0
             except Exception:
                 pass
 
@@ -72,19 +72,19 @@ def log_scene(scene: trimesh.Scene, node: str, path: str | None = None, timeless
             except Exception:
                 pass
 
-            albedo_factor = vertex_colors if vertex_colors is not None else visual_color
+            albedo_factor = mean_vertex_color or visual_color
 
             rr.log(
                 path,
                 rr.Mesh3D(
                     vertex_positions=mesh.vertices,
-                    indices=mesh.faces,
+                    triangle_indices=mesh.faces,
                     vertex_normals=mesh.vertex_normals,
-                    mesh_material=rr.Material(albedo_factor=albedo_factor),
+                    albedo_factor=albedo_factor,
                 ),
-                timeless=timeless,
+                static=static,
             )
 
     if children:
         for child in children:
-            log_scene(scene, child, path, timeless)
+            log_scene(scene, child, path, static)

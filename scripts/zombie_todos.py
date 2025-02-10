@@ -78,13 +78,13 @@ internal_issue_number_pattern = re.compile(r"TODO\((?:#(\d+))(?:,\s*(?:#(\d+)))*
 def check_file(path: str) -> bool:
     ok = True
     closed_issues = set(issues)
-    with open(path) as f:
+    with open(path, encoding="utf8") as f:
         for i, line in enumerate(f.readlines()):
             matches = internal_issue_number_pattern.search(line)
             if matches is not None:
                 for match in matches.groups():
                     if match is not None and int(match) in closed_issues:
-                        print(f"{path}+{i}: {line.strip()}")
+                        print(f"{path}:{i}: {line.strip()}")
                         ok &= False
     return ok
 
@@ -119,7 +119,7 @@ def main() -> None:
                 filepath = os.path.join(root, filename)
                 if should_ignore(filepath):
                     continue
-                if filepath not in exclude_paths:
+                if filepath.replace("\\", "/") not in exclude_paths:
                     ok &= check_file(filepath)
 
     if not ok:

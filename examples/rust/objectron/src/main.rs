@@ -49,11 +49,9 @@ fn timepoint(index: usize, time: f64) -> rerun::TimePoint {
     let timeline_time = rerun::Timeline::new_temporal("time");
     let timeline_frame = rerun::Timeline::new_sequence("frame");
     let time = rerun::Time::from_seconds_since_epoch(time);
-    [
-        (timeline_time, time.into()),
-        (timeline_frame, (index as i64).into()),
-    ]
-    .into()
+    rerun::TimePoint::default()
+        .with(timeline_time, time)
+        .with(timeline_frame, index as i64)
 }
 
 struct AnnotationsPerFrame<'a>(HashMap<usize, &'a objectron::FrameAnnotation>);
@@ -101,13 +99,13 @@ fn log_baseline_objects(
                 return None;
             }
 
-            let box_half_size: rerun::HalfSizes3D =
+            let box_half_size: rerun::HalfSize3D =
                 (glam::Vec3::from_slice(&object.scale) * 0.5).into();
             let transform = {
                 let translation = glam::Vec3::from_slice(&object.translation);
                 // NOTE: the dataset is all row-major, transpose those matrices!
                 let rotation = glam::Mat3::from_cols_slice(&object.rotation).transpose();
-                rerun::TranslationAndMat3x3::new(translation, rotation)
+                rerun::Transform3D::from_translation_mat3x3(translation, rotation)
             };
             let label = object.category.as_str();
 
@@ -117,13 +115,13 @@ fn log_baseline_objects(
 
     for (id, bbox_half_size, transform, label) in boxes {
         let path = format!("world/annotations/box-{id}");
-        rec.log_timeless(
+        rec.log_static(
             path.clone(),
             &rerun::Boxes3D::from_half_sizes([bbox_half_size])
                 .with_labels([label])
                 .with_colors([rerun::Color::from_rgb(160, 230, 130)]),
         )?;
-        rec.log_timeless(path, &rerun::Transform3D::new(transform))?;
+        rec.log_static(path, &transform)?;
     }
 
     Ok(())
@@ -131,10 +129,9 @@ fn log_baseline_objects(
 
 fn log_video_frame(rec: &rerun::RecordingStream, ar_frame: &ArFrame) -> anyhow::Result<()> {
     let image_path = ar_frame.dir.join(format!("video/{}.jpg", ar_frame.index));
-    let img = rerun::datatypes::TensorData::from_jpeg_file(&image_path)?;
 
     rec.set_timepoint(ar_frame.timepoint.clone());
-    rec.log("world/camera", &rerun::Image::new(img))
+    rec.log("world/camera", &rerun::EncodedImage::from_file(image_path)?)
         .map_err(Into::into)
 }
 
@@ -155,7 +152,7 @@ fn log_ar_camera(
     // input (1920x1440); we need to convert between the two.
     // See:
     // - https://github.com/google-research-datasets/Objectron/issues/39
-    // - https://github.com/google-research-datasets/Objectron/blob/master/notebooks/objectron-3dprojection-hub-tutorial.ipynb
+    // - https://github.com/google-research-datasets/Objectron/blob/c06a65165a18396e1e00091981fd1652875c97b5/notebooks/objectron-3dprojection-hub-tutorial.ipynb
     // swap px/py
     use glam::Vec3Swizzles as _;
     intrinsics.z_axis = intrinsics.z_axis.yxz();
@@ -189,7 +186,6 @@ fn log_feature_points(
     timepoint: rerun::TimePoint,
     points: &objectron::ArPointCloud,
 ) -> anyhow::Result<()> {
-    let ids = points.identifier.iter();
     let points = points.point.iter();
 
     rec.set_timepoint(timepoint);
@@ -202,7 +198,6 @@ fn log_feature_points(
                 p.z.unwrap_or_default(),
             )
         }))
-        .with_instance_keys(ids.map(|id| rerun::InstanceKey(*id as _)))
         .with_colors([rerun::Color::from_rgb(255, 255, 255)]),
     )?;
 
@@ -217,15 +212,11 @@ fn log_frame_annotations(
     for ann in &annotations.annotations {
         // TODO(cmc): we shouldn't be using those preprojected 2D points to begin with, Rerun is
         // capable of projecting the actual 3D points in real time now.
-        let (ids, points): (Vec<_>, Vec<_>) = ann
+        let points: Vec<_> = ann
             .keypoints
             .iter()
-            .filter_map(|kp| {
-                kp.point_2d
-                    .as_ref()
-                    .map(|p| (rerun::InstanceKey(kp.id as _), [p.x * 1440.0, p.y * 1920.0]))
-            })
-            .unzip();
+            .filter_map(|kp| kp.point_2d.as_ref().map(|p| [p.x * 1440.0, p.y * 1920.0]))
+            .collect();
 
         rec.set_timepoint(timepoint.clone());
 
@@ -269,9 +260,7 @@ fn log_frame_annotations(
         } else {
             rec.log(
                 ent_path,
-                &rerun::Points2D::new(points)
-                    .with_instance_keys(ids)
-                    .with_colors([rerun::Color::from_rgb(130, 160, 250)]),
+                &rerun::Points2D::new(points).with_colors([rerun::Color::from_rgb(130, 160, 250)]),
             )?;
         }
     }
@@ -334,14 +323,14 @@ fn run(rec: &rerun::RecordingStream, args: &Args) -> anyhow::Result<()> {
         format!(
             "Could not read the recording, have you downloaded the dataset? \
             Try running the python version first to download it automatically \
-            (`examples/python/objectron/main.py --recording {}`).",
+            (`python -m objectron --recording {}`).",
             args.recording.to_possible_value().unwrap().get_name(),
         )
     })?;
     let annotations = read_annotations(&store_info.path_annotations)?;
 
     // See https://github.com/google-research-datasets/Objectron/issues/39 for coordinate systems
-    rec.log_timeless("world", &rerun::ViewCoordinates::RUB)?;
+    rec.log_static("world", &rerun::ViewCoordinates::RUB())?;
 
     log_baseline_objects(rec, &annotations.objects)?;
 

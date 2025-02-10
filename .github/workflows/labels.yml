@@ -13,6 +13,9 @@ on:
       - labeled
       - unlabeled
 
+# No permissions needed here
+# permissions:
+
 jobs:
   label:
     runs-on: ubuntu-latest
@@ -36,4 +39,43 @@ jobs:
         with:
           mode: minimum
           count: 1
-          labels: "📊 analytics, 🟦 blueprint, 🪳 bug, 🌊 C++ API, CLI, codegen/idl, 🧑‍💻 dev experience, dependencies, 📖 documentation, 💬 discussion, examples, exclude from changelog, 🪵 Log-API, 📉 performance, 🐍 Python API, ⛃ re_datastore, 📺 re_viewer, 🔺 re_renderer, 🚜 refactor, ⛴ release, 🦀 Rust API, 🔨 testing, ui, 🕸️ web"
+          labels: "📊 analytics, 🟦 blueprint, 🪳 bug, 🌊 C++ API, CLI, codegen/idl, 🧑‍💻 dev experience, dependencies, 📖 documentation, 💬 discussion, examples, exclude from changelog, 🪵 Log & send APIs, 📉 performance, 🐍 Python API, ⛃ re_datastore, 🔍 re_query, 📺 re_viewer, 🔺 re_renderer, 🚜 refactor, ⛴ release, 🦀 Rust API, 🔨 testing, ui, 🕸️ web"
+
+  wasm-bindgen-check:
+    name: Check wasm-bindgen version
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.39.0
+
+      - name: Get current wasm-bindgen version
+        id: current-version
+        run: |
+          version=$(pixi run taplo get -f crates/viewer/re_viewer/Cargo.toml "target.*.dependencies.wasm-bindgen")
+          echo "current_version=$version" >> $GITHUB_OUTPUT
+
+      - name: Get previous wasm-bindgen version
+        id: previous-version
+        run: |
+          prev_ref=$(git rev-parse --abbrev-ref HEAD)
+          git checkout main
+
+          version=$(pixi run taplo get -f crates/viewer/re_viewer/Cargo.toml "target.*.dependencies.wasm-bindgen")
+          echo "previous_version=$version" >> $GITHUB_OUTPUT
+
+          git checkout $prev_ref
+
+      - name: Require label if versions changed
+        if: ${{ steps.current-version.outputs.current_version != steps.previous-version.outputs.previous_version }}
+        uses: mheap/github-action-required-labels@v3
+        with:
+          mode: exactly
+          count: 1
+          labels: "wasm-bindgen version update"

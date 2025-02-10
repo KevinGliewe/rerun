@@ -1,15 +1,15 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
+import glob
+import importlib
 from os.path import basename, dirname, isfile, join
 
 import rerun as rr
 
 
 def log_checks(args: argparse.Namespace) -> None:
-    import glob
-    import importlib
-
     modules = glob.glob(join(dirname(__file__), "*.py"))
     modules = [basename(f)[:-3] for f in modules if isfile(f) and basename(f).startswith("check_")]
 
@@ -19,8 +19,8 @@ def log_checks(args: argparse.Namespace) -> None:
 
 
 def log_readme() -> None:
-    with open(join(dirname(__file__), "README.md")) as f:
-        rr.log("readme", rr.TextDocument(f.read(), media_type=rr.MediaType.MARKDOWN), timeless=True)
+    with open(join(dirname(__file__), "README.md"), encoding="utf8") as f:
+        rr.log("readme", rr.TextDocument(f.read(), media_type=rr.MediaType.MARKDOWN), static=True)
 
 
 def main() -> None:

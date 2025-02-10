@@ -18,7 +18,7 @@ BEGIN_MARKER = "<BEGIN_GENERATED:{}>"
 END_MARKER = "<END_GENERATED:{}>"
 
 
-SCRIPT_PATH = os.path.relpath(__file__, os.getcwd())
+SCRIPT_PATH = os.path.relpath(__file__, os.getcwd()).replace("\\", "/")
 
 ################################################################################
 
@@ -29,6 +29,49 @@ class ViewCoordinates:
     x: str
     y: str
     z: str
+
+
+def is_left_handed(coords: ViewCoordinates) -> bool:
+    def rfd(dir: str) -> tuple[int, int, int]:
+        if dir == "Right":
+            return (1, 0, 0)
+        elif dir == "Left":
+            return (-1, 0, 0)
+        elif dir == "Up":
+            return (0, -1, 0)
+        elif dir == "Down":
+            return (0, 1, 0)
+        elif dir == "Back":
+            return (0, 0, -1)
+        elif dir == "Forward":
+            return (0, 0, 1)
+        else:
+            raise RuntimeWarning(f"Unknown direction: {dir}")
+
+    m00, m01, m02 = rfd(coords.x)
+    m10, m11, m12 = rfd(coords.y)
+    m20, m21, m22 = rfd(coords.z)
+
+    deterimnant = (
+        m00 * m11 * m22 + m01 * m12 * m20 + m02 * m10 * m21 - m02 * m11 * m20 - m01 * m10 * m22 - m00 * m12 * m21
+    )
+
+    if deterimnant == 1:
+        return False
+    elif deterimnant == -1:
+        return True
+    else:
+        raise RuntimeWarning(f"Degenerate coordinate system: {coords} with ddeterimnant {deterimnant}")
+
+
+def doclines(coords: ViewCoordinates) -> list[str]:
+    docs = [f"X={coords.x}, Y={coords.y}, Z={coords.z}"]
+    if is_left_handed(coords):
+        docs.append("")
+        docs.append(
+            "⚠️ This is a left-handed coordinate system, which is [not yet supported by Rerun](https://github.com/rerun-io/rerun/issues/5032)."
+        )
+    return docs
 
 
 def generate_view_permutations() -> Iterable[ViewCoordinates]:
@@ -62,11 +105,12 @@ def generate_up_handed_permutations() -> Iterable[ViewCoordinates]:
 
 ################################################################################
 # Rust Archetype
-RUST_ARCHETYPE_EXTENSION_FILE = "crates/re_types/src/archetypes/view_coordinates_ext.rs"
+RUST_ARCHETYPE_EXTENSION_FILE = "crates/store/re_types/src/archetypes/view_coordinates_ext.rs"
 
 
 def rust_arch_decl(coords: ViewCoordinates) -> str:
-    return f"define_coordinates!({coords.name} => ({coords.x}, {coords.y}, {coords.z}));\n"
+    docstring = "\n".join(doclines(coords))
+    return f'define_coordinates!("{docstring}", {coords.name} => ({coords.x}, {coords.y}, {coords.z}));\n'
 
 
 def gen_rust_arch_decl() -> list[str]:
@@ -82,11 +126,12 @@ def gen_rust_arch_decl() -> list[str]:
 
 ################################################################################
 # Rust Component
-RUST_COMPONENT_EXTENSION_FILE = "crates/re_types/src/components/view_coordinates_ext.rs"
+RUST_COMPONENT_EXTENSION_FILE = "crates/store/re_types/src/components/view_coordinates_ext.rs"
 
 
 def rust_cmp_decl(coords: ViewCoordinates) -> str:
-    return f"define_coordinates!({coords.name} => ({coords.x}, {coords.y}, {coords.z}));\n"
+    docstring = "\n".join(doclines(coords))
+    return f'define_coordinates!("{docstring}", {coords.name} => ({coords.x}, {coords.y}, {coords.z}));\n'
 
 
 def gen_rust_cmp_decl() -> list[str]:
@@ -146,7 +191,8 @@ PYTHON_COMPONENT_EXTENSION_FILE = "rerun_py/rerun_sdk/rerun/components/view_coor
 
 
 def py_cmp_decl(coords: ViewCoordinates) -> str:
-    return f"{coords.name}: ViewCoordinates = None  # type: ignore[assignment]\n"
+    docstring = "\n".join(doclines(coords))
+    return f'{coords.name}: ViewCoordinates = None  # type: ignore[assignment]\n    """{docstring}"""\n\n'
 
 
 def gen_py_cmp_decl() -> list[str]:
@@ -184,7 +230,8 @@ CPP_ARCHETYPE_EXTENSION_FILE = "rerun_cpp/src/rerun/archetypes/view_coordinates_
 
 
 def cpp_arch_decl(coords: ViewCoordinates) -> str:
-    return f"static const rerun::archetypes::ViewCoordinates {coords.name};\n"
+    docstring = "".join(f"/// {docline}\n" for docline in doclines(coords))
+    return f"{docstring}RERUN_SDK_EXPORT static const rerun::archetypes::ViewCoordinates {coords.name};\n\n"
 
 
 def gen_cpp_arch_decl() -> list[str]:
@@ -225,7 +272,8 @@ CPP_COMPONENT_EXTENSION_FILE = "rerun_cpp/src/rerun/components/view_coordinates_
 
 
 def cpp_cmp_decl(coords: ViewCoordinates) -> str:
-    return f"static const rerun::components::ViewCoordinates {coords.name};\n"
+    docstring = "".join(f"/// {docline}\n" for docline in doclines(coords))
+    return f"{docstring}RERUN_SDK_EXPORT static const rerun::components::ViewCoordinates {coords.name};\n\n"
 
 
 def gen_cpp_cmp_decl() -> list[str]:
@@ -268,13 +316,13 @@ def show_preview(lines: list[str]) -> None:
 
 
 def patch_file(filename: str, lines: list[str], key: str) -> None:
-    contents = open(filename).readlines()
+    contents = open(filename, encoding="utf8").readlines()
     start_line = next((i for i, line in enumerate(contents) if BEGIN_MARKER.format(key) in line), None)
     end_line = next((i for i, line in enumerate(contents) if END_MARKER.format(key) in line), None)
     if (start_line is None) or (end_line is None):
         raise Exception("Could not find the generated section in the file.")
     new_contents = contents[:start_line] + lines + contents[end_line + 1 :]
-    open(filename, "w").writelines(new_contents)
+    open(filename, "w", encoding="utf8").writelines(new_contents)
 
 
 ################################################################################

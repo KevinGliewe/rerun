@@ -2,17 +2,20 @@
 
 #include <chrono>
 #include <cstdint> // uint32_t etc.
+#include <filesystem>
 #include <optional>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "as_components.hpp"
-#include "collection.hpp"
+#include "component_column.hpp"
 #include "error.hpp"
 #include "spawn_options.hpp"
+#include "time_column.hpp"
 
 namespace rerun {
-    struct DataCell;
+    struct ComponentBatch;
 
     enum class StoreKind {
         Recording,
@@ -49,7 +52,7 @@ namespace rerun {
     ///
     /// Internally, the stream will automatically micro-batch multiple log calls to optimize
     /// transport.
-    /// See [SDK Micro Batching](https://www.rerun.io/docs/reference/sdk-micro-batching) for
+    /// See [SDK Micro Batching](https://www.rerun.io/docs/reference/sdk/micro-batching) for
     /// more information.
     ///
     /// The data will be timestamped automatically based on the `RecordingStream`'s
@@ -140,8 +143,23 @@ namespace rerun {
         /// timeout, and can cause a call to `flush` to block indefinitely.
         ///
         /// This function returns immediately.
-        Error connect(std::string_view tcp_addr = "127.0.0.1:9876", float flush_timeout_sec = 2.0)
-            const;
+        [[deprecated("Use `connect_tcp` instead")]] Error connect(
+            std::string_view tcp_addr = "127.0.0.1:9876", float flush_timeout_sec = 2.0
+        ) const;
+
+        /// Connect to a remote Rerun Viewer on the given ip:port.
+        ///
+        /// Requires that you first start a Rerun Viewer by typing 'rerun' in a terminal.
+        ///
+        /// flush_timeout_sec:
+        /// The minimum time the SDK will wait during a flush before potentially
+        /// dropping data if progress is not being made. Passing a negative value indicates no
+        /// timeout, and can cause a call to `flush` to block indefinitely.
+        ///
+        /// This function returns immediately.
+        Error connect_tcp(
+            std::string_view tcp_addr = "127.0.0.1:9876", float flush_timeout_sec = 2.0
+        ) const;
 
         /// Spawns a new Rerun Viewer process from an executable available in PATH, then connects to it
         /// over TCP.
@@ -170,6 +188,10 @@ namespace rerun {
         }
 
         /// Stream all log-data to a given `.rrd` file.
+        ///
+        /// The Rerun Viewer is able to read continuously from the resulting rrd file while it is being written.
+        /// However, depending on your OS and configuration, changes may not be immediately visible due to file caching.
+        /// This is a common issue on Windows and (to a lesser extent) on MacOS.
         ///
         /// This function returns immediately.
         Error save(std::string_view path) const;
@@ -295,7 +317,7 @@ namespace rerun {
         /// @}
 
         // -----------------------------------------------------------------------------------------
-        /// \name Logging
+        /// \name Sending & logging data.
         /// @{
 
         /// Logs one or more archetype and/or component batches.
@@ -316,7 +338,7 @@ namespace rerun {
         /// ```
         ///
         /// The `log` function can flexibly accept an arbitrary number of additional objects which will
-        /// be merged into the first entity so long as they don't expose conflicting components, for instance:
+        /// be merged into the first entity, for instance:
         /// ```
         /// // Log three points with arrows sticking out of them:
         /// rec.log(
@@ -327,104 +349,130 @@ namespace rerun {
         /// );
         /// ```
         ///
-        /// Any failures that may occur during serialization are handled with `Error::handle`.
+        /// Any failures that may are handled with `Error::handle`.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param archetypes_or_collectiones Any type for which the `AsComponents<T>` trait is implemented.
-        /// This is the case for any archetype or `std::vector`/`std::array`/C-array of components implements.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
         ///
-        /// @see try_log, log_timeless, try_log_with_timeless
+        /// @see try_log, log_static, try_log_with_static
         template <typename... Ts>
-        void log(std::string_view entity_path, const Ts&... archetypes_or_collectiones) const {
+        void log(std::string_view entity_path, const Ts&... as_components) const {
             if (!is_enabled()) {
                 return;
             }
-            try_log_with_timeless(entity_path, false, archetypes_or_collectiones...).handle();
+            try_log_with_static(entity_path, false, as_components...).handle();
         }
 
-        /// Logs one or more archetype and/or component batches as timeless data.
+        /// Logs one or more archetype and/or component batches as static data.
         ///
-        /// Like `log` but logs the data as timeless:
-        /// Timeless data is present on all timelines and behaves as if it was recorded infinitely
-        /// far into the past.
+        /// Like `log` but logs the data as static:
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
         ///
         /// Failures are handled with `Error::handle`.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param archetypes_or_collectiones Any type for which the `AsComponents<T>` trait is implemented.
-        /// This is the case for any archetype or `std::vector`/`std::array`/C-array of components implements.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
         ///
-        /// @see log, try_log_timeless, try_log_with_timeless
+        /// @see log, try_log_static, try_log_with_static
         template <typename... Ts>
-        void log_timeless(std::string_view entity_path, const Ts&... archetypes_or_collectiones)
-            const {
+        void log_static(std::string_view entity_path, const Ts&... as_components) const {
             if (!is_enabled()) {
                 return;
             }
-            try_log_with_timeless(entity_path, true, archetypes_or_collectiones...).handle();
+            try_log_with_static(entity_path, true, as_components...).handle();
         }
 
         /// Logs one or more archetype and/or component batches.
         ///
         /// See `log` for more information.
-        /// Unlike `log` this method returns an error if an error occurs during serialization or logging.
+        /// Unlike `log` this method returns an error if an error occurs.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param archetypes_or_collectiones Any type for which the `AsComponents<T>` trait is implemented.
-        /// This is the case for any archetype or `std::vector`/`std::array`/C-array of components implements.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
         ///
-        /// @see log, try_log_timeless, try_log_with_timeless
+        /// @see log, try_log_static, try_log_with_static
         template <typename... Ts>
-        Error try_log(std::string_view entity_path, const Ts&... archetypes_or_collectiones) const {
+        Error try_log(std::string_view entity_path, const Ts&... as_components) const {
             if (!is_enabled()) {
                 return Error::ok();
             }
-            return try_log_with_timeless(entity_path, false, archetypes_or_collectiones...);
+            return try_log_with_static(entity_path, false, as_components...);
         }
 
-        /// Logs one or more archetype and/or component batches as timeless data, returning an error.
+        /// Logs one or more archetype and/or component batches as static data, returning an error.
         ///
-        /// See `log`/`log_timeless` for more information.
-        /// Unlike `log_timeless` this method returns if an error occurs during serialization or logging.
+        /// See `log`/`log_static` for more information.
+        /// Unlike `log_static` this method returns if an error occurs.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param archetypes_or_collectiones Any type for which the `AsComponents<T>` trait is implemented.
-        /// This is the case for any archetype or `std::vector`/`std::array`/C-array of components implements.
-        /// \returns An error if an error occurs during serialization or logging.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
+        /// \returns An error if an error occurs during evaluation of `AsComponents` or logging.
         ///
-        /// @see log_timeless, try_log, try_log_with_timeless
+        /// @see log_static, try_log, try_log_with_static
         template <typename... Ts>
-        Error try_log_timeless(
-            std::string_view entity_path, const Ts&... archetypes_or_collectiones
-        ) const {
+        Error try_log_static(std::string_view entity_path, const Ts&... as_components) const {
             if (!is_enabled()) {
                 return Error::ok();
             }
-            return try_log_with_timeless(entity_path, true, archetypes_or_collectiones...);
+            return try_log_with_static(entity_path, true, as_components...);
         }
 
-        /// Logs one or more archetype and/or component batches optionally timeless, returning an error.
+        /// Logs one or more archetype and/or component batches optionally static, returning an error.
         ///
-        /// See `log`/`log_timeless` for more information.
-        /// Returns an error if an error occurs during serialization or logging.
+        /// See `log`/`log_static` for more information.
+        /// Returns an error if an error occurs during evaluation of `AsComponents` or logging.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param timeless If true, the logged components will be timeless.
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
         /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
         /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
-        /// \param archetypes_or_collectiones Any type for which the `AsComponents<T>` trait is implemented.
-        /// This is the case for any archetype or `std::vector`/`std::array`/C-array of components implements.
-        /// \returns An error if an error occurs during serialization or logging.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
         ///
-        /// @see log, try_log, log_timeless, try_log_timeless
+        /// @see log, try_log, log_static, try_log_static
         template <typename... Ts>
-        Error try_log_with_timeless(
-            std::string_view entity_path, bool timeless, const Ts&... archetypes_or_collectiones
+        void log_with_static(std::string_view entity_path, bool static_, const Ts&... as_components)
+            const {
+            try_log_with_static(entity_path, static_, as_components...).handle();
+        }
+
+        /// Logs one or more archetype and/or component batches optionally static, returning an error.
+        ///
+        /// See `log`/`log_static` for more information.
+        /// Returns an error if an error occurs during evaluation of `AsComponents` or logging.
+        ///
+        /// \param entity_path Path to the entity in the space hierarchy.
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
+        /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
+        /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
+        /// \param as_components Any type for which the `AsComponents<T>` trait is implemented.
+        /// This is the case for any archetype as well as individual or collection of `ComponentBatch`.
+        /// You can implement `AsComponents` for your own types as well
+        /// \returns An error if an error occurs during evaluation of `AsComponents` or logging.
+        ///
+        /// @see log, try_log, log_static, try_log_static
+        template <typename... Ts>
+        Error try_log_with_static(
+            std::string_view entity_path, bool static_, const Ts&... as_components
         ) const {
             if (!is_enabled()) {
                 return Error::ok();
             }
-            std::vector<DataCell> serialized_batches;
+            std::vector<ComponentBatch> serialized_columns;
             Error err;
             (
                 [&] {
@@ -432,19 +480,19 @@ namespace rerun {
                         return;
                     }
 
-                    const Result<std::vector<DataCell>> serialization_result =
-                        AsComponents<Ts>().serialize(archetypes_or_collectiones);
+                    const Result<Collection<ComponentBatch>> serialization_result =
+                        AsComponents<Ts>().as_batches(as_components);
                     if (serialization_result.is_err()) {
                         err = serialization_result.error;
                         return;
                     }
 
-                    if (serialized_batches.empty()) {
+                    if (serialized_columns.empty()) {
                         // Fast path for the first batch (which is usually the only one!)
-                        serialized_batches = std::move(serialization_result.value);
+                        serialized_columns = std::move(serialization_result.value).to_vector();
                     } else {
-                        serialized_batches.insert(
-                            serialized_batches.end(),
+                        serialized_columns.insert(
+                            serialized_columns.end(),
                             std::make_move_iterator(serialization_result.value.begin()),
                             std::make_move_iterator(serialization_result.value.end())
                         );
@@ -454,27 +502,25 @@ namespace rerun {
             );
             RR_RETURN_NOT_OK(err);
 
-            return try_log_serialized_batches(entity_path, timeless, std::move(serialized_batches));
+            return try_log_serialized_batches(entity_path, static_, std::move(serialized_columns));
         }
 
         /// Logs several serialized batches batches, returning an error on failure.
         ///
-        /// This is a more low-level API than `log`/`log_timeless\ and requires you to already serialize the data
+        /// This is a more low-level API than `log`/`log_static\ and requires you to already serialize the data
         /// ahead of time.
         ///
-        /// The number of instances in each batch must either be equal to the maximum or:
-        /// - zero instances - implies a clear
-        /// - single instance (but other instances have more) - causes a splat
-        ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param timeless If true, the logged components will be timeless.
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
         /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
         /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
         /// \param batches The serialized batches to log.
         ///
-        /// \see `log`, `try_log`, `log_timeless`, `try_log_timeless`, `try_log_with_timeless`
+        /// \see `log`, `try_log`, `log_static`, `try_log_static`, `try_log_with_static`
         Error try_log_serialized_batches(
-            std::string_view entity_path, bool timeless, std::vector<DataCell> batches
+            std::string_view entity_path, bool static_, std::vector<ComponentBatch> batches
         ) const;
 
         /// Bottom level API that logs raw data cells to the recording stream.
@@ -482,8 +528,6 @@ namespace rerun {
         /// In order to use this you need to pass serialized Arrow data cells.
         ///
         /// \param entity_path Path to the entity in the space hierarchy.
-        /// \param num_instances
-        /// Each cell is expected to hold exactly `num_instances` instances.
         /// \param num_data_cells Number of data cells passed in.
         /// \param data_cells The data cells to log.
         /// \param inject_time
@@ -492,13 +536,259 @@ namespace rerun {
         ///
         /// \see `try_log_serialized_batches`
         Error try_log_data_row(
-            std::string_view entity_path, size_t num_instances, size_t num_data_cells,
-            const DataCell* data_cells, bool inject_time
+            std::string_view entity_path, size_t num_data_cells, const ComponentBatch* data_cells,
+            bool inject_time
+        ) const;
+
+        /// Logs the file at the given `path` using all `DataLoader`s available.
+        ///
+        /// A single `path` might be handled by more than one loader.
+        ///
+        /// This method blocks until either at least one `DataLoader` starts streaming data in
+        /// or all of them fail.
+        ///
+        /// See <https://www.rerun.io/docs/reference/data-loaders/overview> for more information.
+        ///
+        /// \param filepath Path to the file to be logged.
+        /// \param entity_path_prefix What should the logged entity paths be prefixed with?
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
+        /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
+        /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
+        ///
+        /// \see `try_log_file_from_path`
+        void log_file_from_path(
+            const std::filesystem::path& filepath,
+            std::string_view entity_path_prefix = std::string_view(), bool static_ = false
+        ) const {
+            try_log_file_from_path(filepath, entity_path_prefix, static_).handle();
+        }
+
+        /// Logs the file at the given `path` using all `DataLoader`s available.
+        ///
+        /// A single `path` might be handled by more than one loader.
+        ///
+        /// This method blocks until either at least one `DataLoader` starts streaming data in
+        /// or all of them fail.
+        ///
+        /// See <https://www.rerun.io/docs/reference/data-loaders/overview> for more information.
+        ///
+        /// \param filepath Path to the file to be logged.
+        /// \param entity_path_prefix What should the logged entity paths be prefixed with?
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
+        /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
+        /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
+        ///
+        /// \see `log_file_from_path`
+        Error try_log_file_from_path(
+            const std::filesystem::path& filepath,
+            std::string_view entity_path_prefix = std::string_view(), bool static_ = false
+        ) const;
+
+        /// Logs the given `contents` using all `DataLoader`s available.
+        ///
+        /// A single `path` might be handled by more than one loader.
+        ///
+        /// This method blocks until either at least one `DataLoader` starts streaming data in
+        /// or all of them fail.
+        ///
+        /// See <https://www.rerun.io/docs/reference/data-loaders/overview> for more information.
+        ///
+        /// \param filepath Path to the file that the `contents` belong to.
+        /// \param contents Contents to be logged.
+        /// \param contents_size Size in bytes of the `contents`.
+        /// \param entity_path_prefix What should the logged entity paths be prefixed with?
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
+        /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
+        /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
+        ///
+        /// \see `try_log_file_from_contents`
+        void log_file_from_contents(
+            const std::filesystem::path& filepath, const std::byte* contents, size_t contents_size,
+            std::string_view entity_path_prefix = std::string_view(), bool static_ = false
+        ) const {
+            try_log_file_from_contents(
+                filepath,
+                contents,
+                contents_size,
+                entity_path_prefix,
+                static_
+            )
+                .handle();
+        }
+
+        /// Logs the given `contents` using all `DataLoader`s available.
+        ///
+        /// A single `path` might be handled by more than one loader.
+        ///
+        /// This method blocks until either at least one `DataLoader` starts streaming data in
+        /// or all of them fail.
+        ///
+        /// See <https://www.rerun.io/docs/reference/data-loaders/overview> for more information.
+        ///
+        /// \param filepath Path to the file that the `contents` belong to.
+        /// \param contents Contents to be logged.
+        /// \param contents_size Size in bytes of the `contents`.
+        /// \param entity_path_prefix What should the logged entity paths be prefixed with?
+        /// \param static_ If true, the logged components will be static.
+        /// Static data has no time associated with it, exists on all timelines, and unconditionally shadows
+        /// any temporal data of the same type.
+        /// Otherwise, the data will be timestamped automatically with `log_time` and `log_tick`.
+        /// Additional timelines set by `set_time_sequence` or `set_time` will also be included.
+        ///
+        /// \see `log_file_from_contents`
+        Error try_log_file_from_contents(
+            const std::filesystem::path& filepath, const std::byte* contents, size_t contents_size,
+            std::string_view entity_path_prefix = std::string_view(), bool static_ = false
+        ) const;
+
+        /// Directly log a columns of data to Rerun.
+        ///
+        /// This variant takes in arbitrary amount of `ComponentColumn`s and `ComponentColumn` collections.
+        ///
+        /// Unlike the regular `log` API, which is row-oriented, this API lets you submit the data
+        /// in a columnar form. Each `TimeColumn` and `ComponentColumn` represents a column of data that will be sent to Rerun.
+        /// The lengths of all of these columns must match, and all
+        /// data that shares the same index across the different columns will act as a single logical row,
+        /// equivalent to a single call to `RecordingStream::log`.
+        ///
+        /// Note that this API ignores any stateful time set on the log stream via the `RecordingStream::set_time_*` APIs.
+        /// Furthermore, this will _not_ inject the default timelines `log_tick` and `log_time` timeline columns.
+        ///
+        /// Any failures that may occur during serialization are handled with `Error::handle`.
+        ///
+        /// \param entity_path Path to the entity in the space hierarchy.
+        /// \param time_columns The time columns to send.
+        /// \param component_columns The columns of components to send. Both individual `ComponentColumn`s and `Collection<ComponentColumn>`s are accepted.
+        /// \see `try_send_columns`
+        template <typename... Ts>
+        void send_columns(
+            std::string_view entity_path, Collection<TimeColumn> time_columns,
+            Ts... component_columns // NOLINT
+        ) const {
+            try_send_columns(entity_path, time_columns, component_columns...).handle();
+        }
+
+        /// Directly log a columns of data to Rerun.
+        ///
+        /// This variant takes in arbitrary amount of `ComponentColumn`s and `ComponentColumn` collections.
+        ///
+        /// Unlike the regular `log` API, which is row-oriented, this API lets you submit the data
+        /// in a columnar form. Each `TimeColumn` and `ComponentColumn` represents a column of data that will be sent to Rerun.
+        /// The lengths of all of these columns must match, and all
+        /// data that shares the same index across the different columns will act as a single logical row,
+        /// equivalent to a single call to `RecordingStream::log`.
+        ///
+        /// Note that this API ignores any stateful time set on the log stream via the `RecordingStream::set_time_*` APIs.
+        /// Furthermore, this will _not_ inject the default timelines `log_tick` and `log_time` timeline columns.
+        ///
+        /// \param entity_path Path to the entity in the space hierarchy.
+        /// \param time_columns The time columns to send.
+        /// \param component_columns The columns of components to send. Both individual `ComponentColumn`s and `Collection<ComponentColumn>`s are accepted.
+        /// \see `send_columns`
+        template <typename... Ts>
+        Error try_send_columns(
+            std::string_view entity_path, Collection<TimeColumn> time_columns,
+            Ts... component_columns // NOLINT
+        ) const {
+            if constexpr (sizeof...(Ts) == 1) {
+                // Directly forward if this is only a single element,
+                // skipping collection of component column vector.
+                return try_send_columns(
+                    entity_path,
+                    std::move(time_columns),
+                    Collection(std::forward<Ts...>(component_columns...))
+                );
+            }
+
+            std::vector<ComponentColumn> flat_column_list;
+            (
+                [&] {
+                    static_assert(
+                        std::is_same_v<std::remove_cv_t<Ts>, ComponentColumn> ||
+                            std::is_constructible_v<Collection<ComponentColumn>, Ts>,
+                        "Ts must be ComponentColumn or a collection thereof"
+                    );
+
+                    push_back_columns(flat_column_list, std::move(component_columns));
+                }(),
+                ...
+            );
+            return try_send_columns(
+                entity_path,
+                std::move(time_columns),
+                // Need to create collection explicitly, otherwise this becomes a recursive call.
+                Collection<ComponentColumn>(std::move(flat_column_list))
+            );
+        }
+
+        /// Directly log a columns of data to Rerun.
+        ///
+        /// Unlike the regular `log` API, which is row-oriented, this API lets you submit the data
+        /// in a columnar form. Each `TimeColumn` and `ComponentColumn` represents a column of data that will be sent to Rerun.
+        /// The lengths of all of these columns must match, and all
+        /// data that shares the same index across the different columns will act as a single logical row,
+        /// equivalent to a single call to `RecordingStream::log`.
+        ///
+        /// Note that this API ignores any stateful time set on the log stream via the `RecordingStream::set_time_*` APIs.
+        /// Furthermore, this will _not_ inject the default timelines `log_tick` and `log_time` timeline columns.
+        ///
+        /// Any failures that may occur during serialization are handled with `Error::handle`.
+        ///
+        /// \param entity_path Path to the entity in the space hierarchy.
+        /// \param time_columns The time columns to send.
+        /// \param component_columns The columns of components to send.
+        /// \see `try_send_columns`
+        void send_columns(
+            std::string_view entity_path, Collection<TimeColumn> time_columns,
+            Collection<ComponentColumn> component_columns
+        ) const {
+            try_send_columns(entity_path, time_columns, component_columns).handle();
+        }
+
+        /// Directly log a columns of data to Rerun.
+        ///
+        /// Unlike the regular `log` API, which is row-oriented, this API lets you submit the data
+        /// in a columnar form. Each `TimeColumn` and `ComponentColumn` represents a column of data that will be sent to Rerun.
+        /// The lengths of all of these columns must match, and all
+        /// data that shares the same index across the different columns will act as a single logical row,
+        /// equivalent to a single call to `RecordingStream::log`.
+        ///
+        /// Note that this API ignores any stateful time set on the log stream via the `RecordingStream::set_time_*` APIs.
+        /// Furthermore, this will _not_ inject the default timelines `log_tick` and `log_time` timeline columns.
+        ///
+        /// \param entity_path Path to the entity in the space hierarchy.
+        /// \param time_columns The time columns to send.
+        /// \param component_columns The columns of components to send.
+        /// \see `send_columns`
+        Error try_send_columns(
+            std::string_view entity_path, Collection<TimeColumn> time_columns,
+            Collection<ComponentColumn> component_columns
         ) const;
 
         /// @}
 
       private:
+        // Utility function to implement `try_send_columns` variadic template.
+        static void push_back_columns(
+            std::vector<ComponentColumn>& component_columns, Collection<ComponentColumn> new_columns
+        ) {
+            for (const auto& new_column : new_columns) {
+                component_columns.emplace_back(std::move(new_column));
+            }
+        }
+
+        static void push_back_columns(
+            std::vector<ComponentColumn>& component_columns, ComponentColumn new_column
+        ) {
+            component_columns.emplace_back(std::move(new_column));
+        }
+
         RecordingStream(uint32_t id, StoreKind store_kind);
 
         uint32_t _id;

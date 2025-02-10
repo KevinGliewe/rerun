@@ -1,6 +1,6 @@
 <!--[metadata]
-title = "Custom Store Subscriber"
-tags = ["store-event", "store-diff", "store-subscriber"]
+title = "Custom store subscriber"
+tags = ["Store event", "Store diff", "Store subscriber"]
 -->
 
 
@@ -12,7 +12,7 @@ tags = ["store-event", "store-diff", "store-subscriber"]
   <source media="(max-width: 1200px)" srcset="https://static.rerun.io/custom_store_view/f7258673486f91d944180bd4a83307bce09b741e/1200w.png">
 </picture>
 
-This example demonstrates how to use [`StoreSubscriber`]s and [`StoreEvent`]s to implement both custom secondary indices and trigger systems.
+This example demonstrates how to use [`ChunkStoreSubscriber`]s and [`ChunkStoreEvent`]s to implement both custom secondary indices and trigger systems.
 
 Usage:
 ```sh

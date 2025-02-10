@@ -10,10 +10,6 @@ from typing import Any, Callable, TypeVar, cast
 
 from .recording_stream import RecordingStream
 
-__all__ = [
-    "_send_warning_or_raise",
-]
-
 _TFunc = TypeVar("_TFunc", bound=Callable[..., Any])
 
 
@@ -86,7 +82,7 @@ def _build_warning_context_string(skip_first: int) -> str:
 
 def _send_warning_or_raise(
     message: str,
-    depth_to_user_code: int,
+    depth_to_user_code: int = 1,
     recording: RecordingStream | None = None,
     exception_type: type[Exception] = ValueError,
 ) -> None:
@@ -121,7 +117,7 @@ def _send_warning_or_raise(
         # TODO(jleibs): Context/stack should be its own component.
         context_descriptor = _build_warning_context_string(skip_first=depth_to_user_code + 1)
 
-        log("rerun", TextLog(text=f"{message}\n{context_descriptor}", level="WARN"), recording=recording)
+        log("rerun", TextLog(text=f"{message}\n{context_descriptor}", level="WARN"), recording=recording)  # NOLINT
         _rerun_exception_ctx.sending_warning = False
     else:
         warnings.warn(
@@ -155,6 +151,7 @@ class catch_and_log_exceptions:
     exception_return_value:
         If an exception is caught, this value will be returned instead of
         the function's return value.
+
     """
 
     def __init__(

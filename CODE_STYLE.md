@@ -41,6 +41,11 @@ let Some(first) = vec.get(0) else {
 };
 ```
 
+### Iterators
+Be careful when iterating over `HashSet`s and `HashMap`s, as the order is non-deterministic.
+Whenever you return a list or an iterator, sort it first.
+If you don't want to sort it for performance reasons, you MUST put `unsorted` in the  name as a warning.
+
 ### Error handling and logging
 We log problems using our own `re_log` crate (which is currently a wrapper around [`tracing`](https://crates.io/crates/tracing/)).
 
@@ -186,7 +191,7 @@ class Rect {
 
     Rect with_color(Color color) && {
         _color = color;
-        return std::move(*this);
+        return std::move(*this); // `*this` is always an lvalue, so we have to move it to avoid a copy.
     }
 }
 ```
@@ -209,6 +214,8 @@ We don't add `inline` before class/struct member functions if they are inlined i
 Preprocessor directives/macros are usually prefixed with `RR_`
 
 Include what you use: if you use `std::vector`, then include `<vector>` - don't depend on a transitive include.
+
+We prefer the "data, length" parameter order, e.g. `void foo(const void* data, size_t len)` or `void image(const f32* data, Resolution resolution)`.
 
 
 ## Naming

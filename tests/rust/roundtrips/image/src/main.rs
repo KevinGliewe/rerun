@@ -1,5 +1,8 @@
 //! Logs an `Image` archetype for roundtrip checks.
 
+// Allow unwrap() in tests (allow-unwrap-in-tests doesn't apply)
+#![allow(clippy::unwrap_used)]
+
 use half::f16;
 use image::{Rgb, RgbImage};
 use ndarray::{Array, ShapeBuilder};
@@ -22,7 +25,10 @@ fn run(rec: &RecordingStream, _args: &Args) -> anyhow::Result<()> {
         }
     }
 
-    rec.log("image", &Image::try_from(img)?)?;
+    rec.log(
+        "image",
+        &Image::from_color_model_and_tensor(rerun::ColorModel::RGB, img)?,
+    )?;
 
     let mut array_image = Array::<f16, _>::default((4, 5).f());
 
@@ -33,7 +39,10 @@ fn run(rec: &RecordingStream, _args: &Args) -> anyhow::Result<()> {
         }
     }
 
-    rec.log("image_f16", &Image::try_from(array_image)?)?;
+    rec.log(
+        "image_f16",
+        &Image::from_color_model_and_tensor(rerun::ColorModel::L, array_image)?,
+    )?;
 
     Ok(())
 }

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import rerun as rr
 
-README = """
+README = """\
 # Hover, Select, Deselect, and Reset
 
 This checks whether different UIs behave correctly with hover and selection.
@@ -26,18 +26,26 @@ For each of the views:
     * If you think this is unexpected, create an issue.
     * Double-click the entity and verify that it becomes selected and highlighted in the blueprint tree.
 
+### Graph Select
+Should work just as 2D/3D views.
+
+### Text view
+Clicking on a text view (what you're reading right now) should select the view.
+Hovering the view should work as well.
+
 ### Reset
 For each of the views:
 * Zoom and/or pan the view
 * Double-click the background of the view and verify it resets the view to its default state.
 
 ### Deselect
-Finally, try hitting escape and check whether that deselects whatever was currently selected.
+Finally, try hitting escape and check whether that deselects whatever was currently selected and the recording is
+selected instead.
 """
 
 
 def log_readme() -> None:
-    rr.log("readme", rr.TextDocument(README, media_type=rr.MediaType.MARKDOWN), timeless=True)
+    rr.log("readme", rr.TextDocument(README, media_type=rr.MediaType.MARKDOWN), static=True)
 
 
 def log_plots() -> None:
@@ -64,7 +72,7 @@ def log_points_3d() -> None:
     colors = rng.uniform(0, 255, size=[10, 3])
     radii = rng.uniform(0, 1, size=[10])
 
-    rr.log("3d/points", rr.Points3D(positions, colors=colors, radii=radii))
+    rr.log("3D/points", rr.Points3D(positions, colors=colors, radii=radii))
 
 
 def log_points_2d() -> None:
@@ -76,18 +84,28 @@ def log_points_2d() -> None:
     colors = rng.uniform(0, 255, size=[10, 3])
     radii = rng.uniform(0, 1, size=[10])
 
-    rr.log("2d/points", rr.Points2D(positions, colors=colors, radii=radii))
+    rr.log("2D/points", rr.Points2D(positions, colors=colors, radii=radii))
+
+
+def log_graph() -> None:
+    rr.log("graph", rr.GraphNodes(["a", "b"], labels=["A", "B"]))
+
+
+def log_map() -> None:
+    rr.log("points", rr.GeoPoints(lat_lon=[[47.6344, 19.1397], [47.6334, 19.1399]], radii=rr.Radius.ui_points(20.0)))
 
 
 def run(args: Namespace) -> None:
-    # TODO(cmc): I have no idea why this works without specifying a `recording_id`, but
-    # I'm not gonna rely on it anyway.
     rr.script_setup(args, f"{os.path.basename(__file__)}", recording_id=uuid4())
 
     log_readme()
     log_plots()
     log_points_3d()
     log_points_2d()
+    log_graph()
+    log_map()
+
+    rr.send_blueprint(rr.blueprint.Blueprint(auto_layout=True, auto_views=True), make_active=True, make_default=True)
 
 
 if __name__ == "__main__":

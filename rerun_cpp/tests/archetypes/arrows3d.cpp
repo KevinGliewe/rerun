@@ -17,17 +17,39 @@ SCENARIO(
                                 .with_radii({1.0, 10.0})
                                 .with_colors({{0xAA, 0x00, 0x00, 0xCC}, {0x00, 0xBB, 0x00, 0xDD}})
                                 .with_labels({"hello", "friend"})
-                                .with_class_ids({126, 127})
-                                .with_instance_keys({123ull, 124ull});
+                                .with_class_ids({126, 127});
 
         Arrows3D from_manual;
-        from_manual.vectors = {{1.0, 2.0, 3.0}, {10.0, 20.0, 30.0}};
-        from_manual.origins = {{4.0, 5.0, 6.0}, {40.0, 50.0, 60.0}};
-        from_manual.radii = {1.0, 10.0};
-        from_manual.colors = {{0xAA, 0x00, 0x00, 0xCC}, {0x00, 0xBB, 0x00, 0xDD}};
-        from_manual.labels = {"hello", "friend"};
-        from_manual.class_ids = {126, 127};
-        from_manual.instance_keys = {123ull, 124ull};
+        from_manual.vectors = rerun::ComponentBatch::from_loggable<rerun::components::Vector3D>(
+                                  {{1.0, 2.0, 3.0}, {10.0, 20.0, 30.0}},
+                                  Arrows3D::Descriptor_vectors
+        )
+                                  .value_or_throw();
+        from_manual.origins = rerun::ComponentBatch::from_loggable<rerun::components::Position3D>(
+                                  {{4.0, 5.0, 6.0}, {40.0, 50.0, 60.0}},
+                                  Arrows3D::Descriptor_origins
+        )
+                                  .value_or_throw();
+        from_manual.radii = rerun::ComponentBatch::from_loggable<rerun::components::Radius>(
+                                {1.0, 10.0},
+                                Arrows3D::Descriptor_radii
+        )
+                                .value_or_throw();
+        from_manual.colors = rerun::ComponentBatch::from_loggable<rerun::components::Color>(
+                                 {{0xAA, 0x00, 0x00, 0xCC}, {0x00, 0xBB, 0x00, 0xDD}},
+                                 Arrows3D::Descriptor_colors
+        )
+                                 .value_or_throw();
+        from_manual.labels = rerun::ComponentBatch::from_loggable<rerun::components::Text>(
+                                 {"hello", "friend"},
+                                 Arrows3D::Descriptor_labels
+        )
+                                 .value_or_throw();
+        from_manual.class_ids = rerun::ComponentBatch::from_loggable<rerun::components::ClassId>(
+                                    {126, 127},
+                                    Arrows3D::Descriptor_class_ids
+        )
+                                    .value_or_throw();
 
         test_compare_archetype_serialization(from_manual, from_builder);
     }

@@ -11,25 +11,30 @@ from rerun.components import (
     ColorBatch,
     DrawOrder,
     DrawOrderBatch,
-    DrawOrderLike,
-    InstanceKey,
-    InstanceKeyBatch,
     KeypointId,
     KeypointIdBatch,
     Radius,
-    RadiusArrayLike,
     RadiusBatch,
     TextBatch,
 )
 from rerun.datatypes import (
     Angle,
+    DVec2D,
+    DVec2DArrayLike,
+    DVec2DBatch,
+    Float32ArrayLike,
     Quaternion,
+    QuaternionArrayLike,
     Rgba32ArrayLike,
-    Rotation3D,
-    Rotation3DArrayLike,
     RotationAxisAngle,
+    RotationAxisAngleArrayLike,
     Utf8,
     Utf8ArrayLike,
+    Uuid,
+    UuidArrayLike,
+    UVec3D,
+    UVec3DArrayLike,
+    UVec3DBatch,
     Vec2D,
     Vec2DArrayLike,
     Vec2DBatch,
@@ -59,6 +64,45 @@ def none_empty_or_value(obj: Any, value: Any) -> Any:
         return []
     else:
         return value
+
+
+dvec2ds_arrays: list[DVec2DArrayLike] = [
+    [],
+    np.array([]),
+    # Vec2DArrayLike: Sequence[Point2DLike]:
+    [
+        DVec2D([1, 2]),
+        DVec2D([3, 4]),
+    ],
+    # Vec2DArrayLike: Sequence[Point2DLike]: npt.NDArray[np.float64]
+    [
+        np.array([1, 2], dtype=np.float64),
+        np.array([3, 4], dtype=np.float64),
+    ],
+    # Vec2DArrayLike: Sequence[Point2DLike]: Tuple[float, float]
+    [(1, 2), (3, 4)],
+    # Vec2DArrayLike: torch.tensor is np.ArrayLike
+    torch.tensor([(1, 2), (3, 4)], dtype=torch.float64),
+    # Vec2DArrayLike: Sequence[Point2DLike]: Sequence[float]
+    [1, 2, 3, 4],
+    # Vec2DArrayLike: npt.NDArray[np.float64]
+    np.array([[1, 2], [3, 4]], dtype=np.float64),
+    # Vec2DArrayLike: npt.NDArray[np.float64]
+    np.array([1, 2, 3, 4], dtype=np.float64),
+    # Vec2DArrayLike: npt.NDArray[np.float64]
+    np.array([1, 2, 3, 4], dtype=np.float64).reshape((2, 2, 1, 1, 1)),
+    # PyTorch array
+    torch.asarray([1, 2, 3, 4], dtype=torch.float64),
+]
+
+
+def dvec2ds_expected(obj: Any, type_: Any | None = None) -> Any:
+    if type_ is None:
+        type_ = DVec2DBatch
+
+    expected = none_empty_or_value(obj, [[1.0, 2.0], [3.0, 4.0]])
+
+    return type_._converter(expected)
 
 
 vec2ds_arrays: list[Vec2DArrayLike] = [
@@ -97,7 +141,7 @@ def vec2ds_expected(obj: Any, type_: Any | None = None) -> Any:
 
     expected = none_empty_or_value(obj, [[1.0, 2.0], [3.0, 4.0]])
 
-    return type_._optional(expected)
+    return type_._converter(expected)
 
 
 vec3ds_arrays: list[Vec3DArrayLike] = [
@@ -136,7 +180,7 @@ def vec3ds_expected(obj: Any, type_: Any | None = None) -> Any:
 
     expected = none_empty_or_value(obj, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
-    return type_._optional(expected)
+    return type_._converter(expected)
 
 
 vec4ds_arrays: list[Vec4DArrayLike] = [
@@ -175,63 +219,109 @@ def vec4ds_expected(obj: Any, type_: Any | None = None) -> Any:
 
     expected = none_empty_or_value(obj, [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
 
-    return type_._optional(expected)
+    return type_._converter(expected)
 
 
-rotations_arrays: list[Rotation3DArrayLike] = [
+uvec3ds_arrays: list[UVec3DArrayLike] = [
     [],
-    # Rotation3D
-    Rotation3D(Quaternion(xyzw=[1, 2, 3, 4])),
-    Rotation3D(Quaternion(xyzw=torch.tensor([1, 2, 3, 4]))),
-    Rotation3D(RotationAxisAngle([1.0, 2.0, 3.0], Angle(4))),
-    # Quaternion
+    np.array([]),
+    # UVec3DArrayLike: Sequence[Position3DLike]: Position3D
+    [
+        UVec3D([1, 2, 3]),
+        UVec3D([4, 5, 6]),
+    ],
+    # UVec3DArrayLike: Sequence[Position3DLike]: npt.NDArray[np.uint32]
+    [
+        np.array([1, 2, 3], dtype=np.uint32),
+        np.array([4, 5, 6], dtype=np.uint32),
+    ],
+    # UVec3DArrayLike: Sequence[Position3DLike]: Tuple[uint, uint]
+    [(1, 2, 3), (4, 5, 6)],
+    # UVec3DArrayLike: Sequence[Position3DLike]: Sequence[uint]
+    [1, 2, 3, 4, 5, 6],
+    # UVec3DArrayLike: npt.NDArray[np.uint32]
+    np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint32),
+    # UVec3DArrayLike: npt.NDArray[np.uint32]
+    np.array([1, 2, 3, 4, 5, 6], dtype=np.uint32),
+    # UVec3DArrayLike: npt.NDArray[np.uint32]
+    np.array([1, 2, 3, 4, 5, 6], dtype=np.uint32).reshape((2, 3, 1, 1, 1)),
+]
+
+
+def uvec3ds_expected(obj: Any, type_: Any | None = None) -> Any:
+    if type_ is None:
+        type_ = UVec3DBatch
+
+    expected = none_empty_or_value(obj, [[1, 2, 3], [4, 5, 6]])
+
+    return type_._converter(expected)
+
+
+quaternions_arrays: list[QuaternionArrayLike] = [
+    [],
     Quaternion(xyzw=[1, 2, 3, 4]),
     Quaternion(xyzw=[1.0, 2.0, 3.0, 4.0]),
     Quaternion(xyzw=np.array([1, 2, 3, 4])),
     Quaternion(xyzw=torch.tensor([1, 2, 3, 4])),
-    # RotationAxisAngle
+    [
+        Quaternion(xyzw=np.array([1, 2, 3, 4])),
+        Quaternion(xyzw=[1, 2, 3, 4]),
+    ],
+    # QuaternionArrayLike: npt.NDArray[np.float32]
+    np.array([[1, 2, 3, 4], [1, 2, 3, 4]], dtype=np.float32),
+]
+
+
+def quaternions_expected(rotations: QuaternionArrayLike, type_: Any) -> Any:
+    if rotations is None:
+        return type_._converter(None)
+    elif hasattr(rotations, "__len__") and len(rotations) == 0:  # type: ignore[arg-type]
+        return type_._converter(rotations)
+    elif isinstance(rotations, Quaternion):
+        return type_._converter(Quaternion(xyzw=[1, 2, 3, 4]))
+    else:  # sequence of Rotation3DLike
+        return type_._converter([Quaternion(xyzw=[1, 2, 3, 4])] * 2)
+
+
+rotation_axis_angle_arrays: list[RotationAxisAngleArrayLike] = [
+    [],
     RotationAxisAngle([1, 2, 3], 4),
     RotationAxisAngle([1.0, 2.0, 3.0], Angle(4)),
     RotationAxisAngle(Vec3D([1, 2, 3]), Angle(4)),
     RotationAxisAngle(np.array([1, 2, 3], dtype=np.uint8), Angle(rad=4)),
     RotationAxisAngle(torch.tensor([1, 2, 3]), Angle(rad=4)),
-    # Sequence[Rotation3DBatch]
     [
-        Rotation3D(Quaternion(xyzw=[1, 2, 3, 4])),
-        [1, 2, 3, 4],
-        Quaternion(xyzw=[1, 2, 3, 4]),
+        RotationAxisAngle([1, 2, 3], 4),
         RotationAxisAngle([1, 2, 3], 4),
     ],
 ]
 
 
-def expected_rotations(rotations: Rotation3DArrayLike, type_: Any) -> Any:
+def expected_rotation_axis_angles(rotations: RotationAxisAngleArrayLike, type_: Any) -> Any:
     if rotations is None:
-        return type_._optional(None)
+        return type_._converter(None)
     elif hasattr(rotations, "__len__") and len(rotations) == 0:
-        return type_._optional(rotations)
-    elif isinstance(rotations, Rotation3D):
-        return type_._optional(rotations)
+        return type_._converter(rotations)
     elif isinstance(rotations, RotationAxisAngle):
-        return type_._optional(RotationAxisAngle([1, 2, 3], 4))
+        return type_._converter(RotationAxisAngle([1, 2, 3], 4))
     elif isinstance(rotations, Quaternion):
-        return type_._optional(Quaternion(xyzw=[1, 2, 3, 4]))
+        return type_._converter(Quaternion(xyzw=[1, 2, 3, 4]))
     else:  # sequence of Rotation3DLike
-        return type_._optional([Quaternion(xyzw=[1, 2, 3, 4])] * 3 + [RotationAxisAngle([1, 2, 3], 4)])
+        return type_._converter([RotationAxisAngle([1, 2, 3], 4)] * 2)
 
 
-radii_arrays: list[RadiusArrayLike | None] = [
+radii_arrays: list[Float32ArrayLike | None] = [
     None,
     [],
     np.array([]),
-    # RadiusArrayLike: Sequence[RadiusLike]: float
+    # Float32ArrayLike: Sequence[RadiusLike]: float
     [1, 10],
-    # RadiusArrayLike: Sequence[RadiusLike]: Radius
+    # Float32ArrayLike: Sequence[RadiusLike]: Radius
     [
         Radius(1),
         Radius(10),
     ],
-    # RadiusArrayLike: npt.NDArray[np.float32]
+    # Float32ArrayLike: npt.NDArray[np.float32]
     np.array([1, 10], dtype=np.float32),
 ]
 
@@ -239,7 +329,7 @@ radii_arrays: list[RadiusArrayLike | None] = [
 def radii_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, [1, 10])
 
-    return RadiusBatch._optional(expected)
+    return RadiusBatch._converter(expected)
 
 
 colors_arrays: list[Rgba32ArrayLike | None] = [
@@ -351,7 +441,7 @@ colors_arrays: list[Rgba32ArrayLike | None] = [
 
 def colors_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, [0xAA0000CC, 0x00BB00DD])
-    return ColorBatch._optional(expected)
+    return ColorBatch._converter(expected)
 
 
 labels_arrays: list[Utf8ArrayLike | None] = [
@@ -369,21 +459,21 @@ labels_arrays: list[Utf8ArrayLike | None] = [
 
 def labels_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, ["hello", "friend"])
-    return TextBatch._optional(expected)
+    return TextBatch._converter(expected)
 
 
-draw_orders: list[DrawOrderLike | None] = [
+draw_orders: list[Float32ArrayLike | None] = [
     None,
-    # DrawOrderLike: float
-    300,
-    # DrawOrderLike: DrawOrder
+    # Float32ArrayLike: float
+    300.0,
+    # Float32ArrayLike: DrawOrder
     DrawOrder(300),
 ]
 
 
 def draw_order_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, [300])
-    return DrawOrderBatch._optional(expected)
+    return DrawOrderBatch._converter(expected)
 
 
 class_ids_arrays = [
@@ -408,7 +498,7 @@ class_ids_arrays = [
 
 def class_ids_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, [126, 127])
-    return ClassIdBatch._optional(expected)
+    return ClassIdBatch._converter(expected)
 
 
 keypoint_ids_arrays = [
@@ -433,21 +523,23 @@ keypoint_ids_arrays = [
 
 def keypoint_ids_expected(obj: Any) -> Any:
     expected = none_empty_or_value(obj, [2, 3])
-    return KeypointIdBatch._optional(expected)
+    return KeypointIdBatch._converter(expected)
 
 
-instance_keys_arrays = [
+uuid_bytes0 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+uuid_bytes1 = [16, 17, 127, 3, 4, 255, 6, 7, 21, 9, 10, 11, 12, 0, 14, 15]
+
+uuids_arrays: list[UuidArrayLike] = [
     [],
     np.array([]),
-    # InstanceKeyArrayLike: Sequence[InstanceKeyLike]: int
-    [U64_MAX_MINUS_1, U64_MAX],
-    # InstanceKeyArrayLike: Sequence[InstanceKeyLike]: InstanceKey
-    [InstanceKey(U64_MAX_MINUS_1), InstanceKey(U64_MAX)],
-    # InstanceKeyArrayLike: np.NDArray[np.uint64]
-    np.array([U64_MAX_MINUS_1, U64_MAX], dtype=np.uint64),
+    # UuidArrayLike: Sequence[UuidLike]: Sequence[int]
+    [uuid_bytes0, uuid_bytes1],
+    # UuidArrayLike: Sequence[UuidLike]: npt.NDArray[np.uint8]
+    np.array([uuid_bytes0, uuid_bytes1], dtype=np.uint8),
+    # UuidArrayLike: Sequence[UuidLike]: npt.NDArray[np.uint32]
+    np.array([uuid_bytes0, uuid_bytes1], dtype=np.uint32),
+    # UuidArrayLike: Sequence[UuidLike]: Uuid
+    [Uuid(uuid_bytes0), Uuid(uuid_bytes1)],
+    # UuidArrayLike: Sequence[UuidLike]: Bytes
+    [bytes(uuid_bytes0), bytes(uuid_bytes1)],
 ]
-
-
-def instance_keys_expected(obj: Any) -> Any:
-    expected = none_empty_or_value(obj, [U64_MAX_MINUS_1, U64_MAX])
-    return InstanceKeyBatch._optional(expected)

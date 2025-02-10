@@ -1,19 +1,17 @@
 #include "recording_stream.hpp"
 #include "c/rerun.h"
-#include "components/instance_key.hpp"
+#include "component_batch.hpp"
 #include "config.hpp"
-#include "data_cell.hpp"
 #include "sdk_info.hpp"
 #include "string_utils.hpp"
 
 #include <arrow/buffer.h>
 
+#include <cassert>
 #include <string> // to_string
 #include <vector>
 
 namespace rerun {
-    static const auto splat_key = components::InstanceKey(std::numeric_limits<uint64_t>::max());
-
     static rr_store_kind store_kind_to_c(StoreKind store_kind) {
         switch (store_kind) {
             case StoreKind::Recording:
@@ -21,6 +19,9 @@ namespace rerun {
 
             case StoreKind::Blueprint:
                 return RR_STORE_KIND_BLUEPRINT;
+
+            default:
+                assert(false && "unreachable");
         }
 
         // This should never happen since if we missed a switch case we'll get a warning on
@@ -104,6 +105,10 @@ namespace rerun {
     }
 
     Error RecordingStream::connect(std::string_view tcp_addr, float flush_timeout_sec) const {
+        return RecordingStream::connect_tcp(tcp_addr, flush_timeout_sec);
+    }
+
+    Error RecordingStream::connect_tcp(std::string_view tcp_addr, float flush_timeout_sec) const {
         rr_error status = {};
         rr_recording_stream_connect(
             _id,
@@ -189,71 +194,127 @@ namespace rerun {
     }
 
     Error RecordingStream::try_log_serialized_batches(
-        std::string_view entity_path, bool timeless, std::vector<DataCell> batches
+        std::string_view entity_path, bool static_, std::vector<ComponentBatch> batches
     ) const {
         if (!is_enabled()) {
             return Error::ok();
         }
-        size_t num_instances_max = 0;
-        for (const auto& batch : batches) {
-            num_instances_max = std::max(num_instances_max, batch.num_instances);
-        }
 
-        std::vector<DataCell> instanced;
-        std::vector<DataCell> splatted;
+        std::vector<ComponentBatch> instanced;
 
         for (const auto& batch : batches) {
-            if (num_instances_max > 1 && batch.num_instances == 1) {
-                splatted.push_back(std::move(batch));
-            } else {
-                instanced.push_back(std::move(batch));
-            }
+            instanced.push_back(std::move(batch));
         }
 
-        bool inject_time = !timeless;
+        bool inject_time = !static_;
 
-        if (!splatted.empty()) {
-            splatted.push_back(
-                std::move(DataCell::from_loggable<components::InstanceKey>(splat_key).value)
-            );
-            auto result =
-                try_log_data_row(entity_path, 1, splatted.size(), splatted.data(), inject_time);
-            if (result.is_err()) {
-                return result;
-            }
-        }
-
-        return try_log_data_row(
-            entity_path,
-            num_instances_max,
-            instanced.size(),
-            instanced.data(),
-            inject_time
-        );
+        return try_log_data_row(entity_path, instanced.size(), instanced.data(), inject_time);
     }
 
     Error RecordingStream::try_log_data_row(
-        std::string_view entity_path, size_t num_instances, size_t num_data_cells,
-        const DataCell* data_cells, bool inject_time
+        std::string_view entity_path, size_t num_component_batches,
+        const ComponentBatch* component_batches, bool inject_time
     ) const {
         if (!is_enabled()) {
             return Error::ok();
         }
         // Map to C API:
-        std::vector<rr_data_cell> c_data_cells(num_data_cells);
-        for (size_t i = 0; i < num_data_cells; i++) {
-            RR_RETURN_NOT_OK(data_cells[i].to_c_ffi_struct(c_data_cells[i]));
+        std::vector<rr_component_batch> c_component_batches(num_component_batches);
+        for (size_t i = 0; i < num_component_batches; i++) {
+            RR_RETURN_NOT_OK(component_batches[i].to_c_ffi_struct(c_component_batches[i]));
         }
 
         rr_data_row c_data_row;
         c_data_row.entity_path = detail::to_rr_string(entity_path);
-        c_data_row.num_instances = static_cast<uint32_t>(num_instances);
-        c_data_row.num_data_cells = static_cast<uint32_t>(num_data_cells);
-        c_data_row.data_cells = c_data_cells.data();
+        c_data_row.num_component_batches = static_cast<uint32_t>(num_component_batches);
+        c_data_row.component_batches = c_component_batches.data();
 
         rr_error status = {};
         rr_recording_stream_log(_id, c_data_row, inject_time, &status);
 
         return status;
     }
+
+    Error RecordingStream::try_log_file_from_path(
+        const std::filesystem::path& filepath, std::string_view entity_path_prefix, bool static_
+    ) const {
+        if (!is_enabled()) {
+            return Error::ok();
+        }
+
+        rr_error status = {};
+        rr_recording_stream_log_file_from_path(
+            _id,
+            detail::to_rr_string(filepath.string()),
+            detail::to_rr_string(entity_path_prefix),
+            static_,
+            &status
+        );
+
+        return status;
+    }
+
+    Error RecordingStream::try_log_file_from_contents(
+        const std::filesystem::path& filepath, const std::byte* contents, size_t contents_size,
+        std::string_view entity_path_prefix, bool static_
+    ) const {
+        if (!is_enabled()) {
+            return Error::ok();
+        }
+
+        rr_bytes data = {};
+        data.bytes = reinterpret_cast<const uint8_t*>(contents);
+        data.length = static_cast<uint32_t>(contents_size);
+
+        rr_error status = {};
+        rr_recording_stream_log_file_from_contents(
+            _id,
+            detail::to_rr_string(filepath.string()),
+            data,
+            detail::to_rr_string(entity_path_prefix),
+            static_,
+            &status
+        );
+
+        return status;
+    }
+
+    Error RecordingStream::try_send_columns(
+        std::string_view entity_path, rerun::Collection<TimeColumn> time_columns,
+        rerun::Collection<ComponentColumn> component_columns
+    ) const {
+        if (!is_enabled()) {
+            return Error::ok();
+        }
+
+        std::vector<rr_time_column> c_time_columns;
+        c_time_columns.reserve(time_columns.size());
+        for (const auto& time_column : time_columns) {
+            rr_time_column c_time_column;
+            RR_RETURN_NOT_OK(time_column.to_c_ffi_struct(c_time_column));
+            c_time_columns.push_back(c_time_column);
+        }
+
+        std::vector<rr_component_column> c_component_columns;
+        c_component_columns.reserve(component_columns.size());
+        for (const auto& component_batch : component_columns) {
+            rr_component_column c_component_batch;
+            RR_RETURN_NOT_OK(component_batch.to_c_ffi_struct(c_component_batch));
+            c_component_columns.push_back(c_component_batch);
+        }
+
+        rr_error status = {};
+        rr_recording_stream_send_columns(
+            _id,
+            detail::to_rr_string(entity_path),
+            c_time_columns.data(),
+            static_cast<uint32_t>(c_time_columns.size()),
+            c_component_columns.data(),
+            static_cast<uint32_t>(c_component_columns.size()),
+            &status
+        );
+
+        return status;
+    }
+
 } // namespace rerun

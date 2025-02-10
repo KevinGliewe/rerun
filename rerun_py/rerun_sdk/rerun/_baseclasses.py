@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Generic, Iterable, Protocol, TypeVar
+from typing import Generic, Iterable, Iterator, Protocol, TypeVar
 
+import numpy as np
+import numpy.typing as npt
 import pyarrow as pa
 from attrs import define, fields
 
@@ -10,55 +12,173 @@ from .error_utils import catch_and_log_exceptions
 T = TypeVar("T")
 
 
-class ComponentBatchLike(Protocol):
-    """Describes interface for objects that can be converted to batch of rerun Components."""
+class ComponentDescriptor:
+    """
+    A `ComponentDescriptor` fully describes the semantics of a column of data.
 
-    def component_name(self) -> str:
-        """Returns the name of the component."""
-        ...
+    Every component is uniquely identified by its `ComponentDescriptor`.
+    """
+
+    archetype_name: str | None
+    """
+    Optional name of the `Archetype` associated with this data.
+
+    `None` if the data wasn't logged through an archetype.
+
+    Example: `rerun.archetypes.Points3D`.
+    """
+
+    archetype_field_name: str | None
+    """
+    Optional name of the field within `Archetype` associated with this data.
+
+    `None` if the data wasn't logged through an archetype.
+
+    Example: `positions`.
+    """
+
+    component_name: str
+    """
+    Semantic name associated with this data.
+
+    This is fully implied by `archetype_name` and `archetype_field`, but
+    included for semantic convenience.
+
+    Example: `rerun.components.Position3D`.
+    """
+
+    def __init__(
+        self,
+        component_name: str,
+        *,
+        archetype_name: str | None = None,
+        archetype_field_name: str | None = None,
+    ) -> None:
+        self.archetype_name = archetype_name
+        self.archetype_field_name = archetype_field_name
+        self.component_name = component_name
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ComponentDescriptor):
+            return NotImplemented
+        return (
+            self.archetype_name == other.archetype_name
+            and self.archetype_field_name == other.archetype_field_name
+            and self.component_name == other.component_name
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.archetype_name, self.archetype_field_name, self.component_name))
+
+    def __str__(self) -> str:
+        archetype_name = self.archetype_name
+        archetype_field_name = self.archetype_field_name
+        component_name = self.component_name
+
+        if archetype_name is not None and archetype_field_name is None:
+            return f"{archetype_name}:{component_name}"
+        elif archetype_name is None and archetype_field_name is not None:
+            return f"{component_name}#{archetype_field_name}"
+        elif archetype_name is not None and archetype_field_name is not None:
+            return f"{archetype_name}:{component_name}#{archetype_field_name}"
+
+        return component_name
+
+    def with_overrides(self, *, archetype_name: str | None, archetype_field_name: str | None) -> ComponentDescriptor:
+        """Unconditionally sets `archetype_name` & `archetype_field_name` to the given ones (if specified)."""
+        component_name = self.component_name
+        archetype_name = archetype_name if archetype_name is not None else self.archetype_name
+        archetype_field_name = archetype_field_name if archetype_field_name is not None else self.archetype_field_name
+        return ComponentDescriptor(
+            component_name, archetype_name=archetype_name, archetype_field_name=archetype_field_name
+        )
+
+    def or_with_overrides(self, *, archetype_name: str | None, archetype_field_name: str | None) -> ComponentDescriptor:
+        """Sets `archetype_name` & `archetype_field_name` to the given one iff it's not already set."""
+        component_name = self.component_name
+        archetype_name = self.archetype_name if self.archetype_name is not None else archetype_name
+        archetype_field_name = (
+            self.archetype_field_name if self.archetype_field_name is not None else archetype_field_name
+        )
+        return ComponentDescriptor(
+            component_name, archetype_name=archetype_name, archetype_field_name=archetype_field_name
+        )
+
+
+class DescribedComponentBatch:
+    """
+    A `ComponentBatchLike` object with its associated `ComponentDescriptor`.
+
+    Used by implementers of `AsComponents` to both efficiently expose their component data
+    and assign the right tags given the surrounding context.
+    """
+
+    def __init__(self, batch: ComponentBatchLike, descriptor: ComponentDescriptor):
+        self._batch = batch
+        self._descriptor = descriptor
+
+    def component_descriptor(self) -> ComponentDescriptor:
+        """
+        Returns the complete descriptor of the component.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        return self._descriptor
 
     def as_arrow_array(self) -> pa.Array:
         """
         Returns a `pyarrow.Array` of the component data.
 
-        Each element in the array corresponds to an instance of the component. Single-instanced
-        components and splats must still be represented as a 1-element array.
+        Part of the `ComponentBatchLike` logging interface.
         """
+        return self._batch.as_arrow_array()
+
+    def partition(self, lengths: npt.ArrayLike | None = None) -> ComponentColumn:
+        """
+        Partitions the component batch into multiple sub-batches, forming a column.
+
+        This makes it possible to use `rr.send_columns` to send columnar data directly into Rerun.
+
+        The returned columns will be partitioned into unit-length sub-batches by default.
+        Use `ComponentColumn.partition` to repartition the data as needed.
+
+        Parameters
+        ----------
+        lengths:
+            The offsets to partition the component at.
+            If specified, `lengths` must sum to the total length of the component batch.
+            If left unspecified, it will default to unit-length batches.
+
+        Returns
+        -------
+        The partitioned component batch as a column.
+
+        """
+        return ComponentColumn(self, lengths=lengths)
+
+
+class ComponentBatchLike(Protocol):
+    """Describes interface for objects that can be converted to batch of rerun Components."""
+
+    def component_descriptor(self) -> ComponentDescriptor:
+        """Returns the complete descriptor of the component."""
+        ...
+
+    def as_arrow_array(self) -> pa.Array:
+        """Returns a `pyarrow.Array` of the component data."""
         ...
 
 
 class AsComponents(Protocol):
-    """
-    Describes interface for interpreting an object as a bundle of Components.
+    """Describes interface for interpreting an object as a bundle of Components."""
 
-    Note: the `num_instances()` function is an optional part of this interface. The method does not need to be
-    implemented as it is only used after checking for its existence. (There is unfortunately no way to express this
-    correctly with the Python typing system, see https://github.com/python/typing/issues/601).
-    """
-
-    def as_component_batches(self) -> Iterable[ComponentBatchLike]:
+    def as_component_batches(self) -> list[DescribedComponentBatch]:
         """
         Returns an iterable of `ComponentBatchLike` objects.
 
-        Each object in the iterable must adhere to the `ComponentBatchLike`
-        interface. All of the batches should have the same length as the value
-        returned by `num_instances`, or length 1 if the component is a splat.,
-        or 0 if the component is being cleared.
+        Each object in the iterable must adhere to the `ComponentBatchLike` interface.
         """
         ...
-
-    # def num_instances(self) -> int | None:
-    #     """
-    #     (Optional) The number of instances in each batch.
-    #
-    #     If not implemented, the number of instances will be determined by the longest
-    #     batch in the bundle.
-    #
-    #     Each batch returned by `as_component_batches` should have this number of
-    #     elements, or 1 in the case it is a splat, or 0 in the case that
-    #     component is being cleared.
-    #     """
-    #     return None
 
 
 @define
@@ -74,92 +194,56 @@ class Archetype:
                 comp = getattr(self, fld.name)
                 datatype = getattr(comp, "type", None)
                 if datatype:
-                    s += f"  {datatype.extension_name}<{datatype.storage_type}>(\n    {comp.to_pylist()}\n  )\n"
+                    s += f"  {datatype.extension_name}<{datatype}>(\n    {comp.to_pylist()}\n  )\n"
         s += ")"
 
         return s
 
     @classmethod
     def archetype_name(cls) -> str:
-        return "rerun.archetypes." + cls.__name__
+        return ".".join(cls.__module__.rsplit(".", 1)[:-1] + [cls.__name__])
 
     @classmethod
-    def indicator(cls) -> ComponentBatchLike:
+    def indicator(cls) -> DescribedComponentBatch:
         """
-        Creates a `ComponentBatchLike` out of the associated indicator component.
+        Creates a `DescribedComponentBatch` out of the associated indicator component.
 
         This allows for associating arbitrary indicator components with arbitrary data.
-        Check out the `manual_indicator` API example to see what's possible.
         """
         from ._log import IndicatorComponentBatch
 
-        return IndicatorComponentBatch(cls.archetype_name())
+        indicator = IndicatorComponentBatch(cls.archetype_name())
+        return DescribedComponentBatch(indicator, indicator.component_descriptor())
 
-    def num_instances(self) -> int:
-        """
-        The number of instances that make up the batch.
-
-        Part of the `AsComponents` logging interface.
-        """
-        num_instances = 0
-        for fld in fields(type(self)):
-            if "component" in fld.metadata:
-                try:
-                    num_instances = max(num_instances, len(getattr(self, fld.name)))
-                except TypeError:  # Happens for indicator batches.
-                    num_instances = max(num_instances, 1)
-
-        return num_instances
-
-    def as_component_batches(self) -> Iterable[ComponentBatchLike]:
+    def as_component_batches(self, *, include_indicators: bool = True) -> list[DescribedComponentBatch]:
         """
         Return all the component batches that make up the archetype.
 
         Part of the `AsComponents` logging interface.
         """
-        yield self.indicator()
+        if include_indicators:
+            batches = [self.indicator()]
+        else:
+            batches = []
 
         for fld in fields(type(self)):
             if "component" in fld.metadata:
                 comp = getattr(self, fld.name)
-                # TODO(#3381): Depending on what we decide
-                # to do with optional components, we may need to make this instead call `_empty_pa_array`
                 if comp is not None:
-                    yield comp
+                    descr = ComponentDescriptor(
+                        comp.component_descriptor().component_name,
+                        archetype_name=self.archetype_name(),
+                        archetype_field_name=fld.name,
+                    )
+                    batches.append(DescribedComponentBatch(comp, descr))
+
+        return batches
 
     __repr__ = __str__
 
 
-class BaseExtensionType(pa.ExtensionType):  # type: ignore[misc]
-    """Extension type for datatypes and non-delegating components."""
-
-    _TYPE_NAME: str
-    """The name used when constructing the extension type.
-
-    Should following rerun typing conventions:
-     - `rerun.datatypes.<TYPE>` for datatypes
-     - `rerun.components.<TYPE>` for components
-
-    Many component types simply subclass a datatype type and override
-    the `_TYPE_NAME` field.
-    """
-
-    _ARRAY_TYPE: type[pa.ExtensionArray] = pa.ExtensionArray
-    """The extension array class associated with this class."""
-
-    # Note: (de)serialization is not used in the Python SDK
-
-    def __arrow_ext_serialize__(self) -> bytes:
-        return b""
-
-    # noinspection PyMethodOverriding
-    @classmethod
-    def __arrow_ext_deserialize__(cls, storage_type: Any, serialized: Any) -> pa.ExtensionType:
-        return cls()
-
-
 class BaseBatch(Generic[T]):
-    _ARROW_TYPE: BaseExtensionType = None  # type: ignore[assignment]
+    _ARROW_DATATYPE: pa.DataType | None = None
     """The pyarrow type of this batch."""
 
     def __init__(self, data: T | None, strict: bool | None = None) -> None:
@@ -186,39 +270,26 @@ class BaseBatch(Generic[T]):
         Returns
         -------
         The Arrow array encapsulating the data.
+
         """
         if data is not None:
             with catch_and_log_exceptions(self.__class__.__name__, strict=strict):
                 # If data is already an arrow array, use it
-                if isinstance(data, pa.Array) and data.type == self._ARROW_TYPE:
+                if isinstance(data, pa.Array) and data.type == self._ARROW_DATATYPE:
                     self.pa_array = data
-                elif isinstance(data, pa.Array) and data.type == self._ARROW_TYPE.storage_type:
-                    self.pa_array = self._ARROW_TYPE.wrap_array(data)
                 else:
-                    self.pa_array = self._ARROW_TYPE.wrap_array(
-                        self._native_to_pa_array(data, self._ARROW_TYPE.storage_type)
-                    )
+                    self.pa_array = self._native_to_pa_array(data, self._ARROW_DATATYPE)
                 return
 
         # If we didn't return above, default to the empty array
-        self.pa_array = _empty_pa_array(self._ARROW_TYPE)
+        self.pa_array = _empty_pa_array(self._ARROW_DATATYPE)
 
     @classmethod
-    def _required(cls, data: T | None) -> BaseBatch[T]:
+    def _converter(cls, data: T | None) -> BaseBatch[T] | None:
         """
-        Primary method for creating Arrow arrays for optional components.
+        Primary method for creating Arrow arrays for components.
 
-        Just calls through to __init__, but with clearer type annotations.
-        """
-        return cls(data)
-
-    @classmethod
-    def _optional(cls, data: T | None) -> BaseBatch[T] | None:
-        """
-        Primary method for creating Arrow arrays for optional components.
-
-        For optional components, the default value of None is preserved in the field to indicate that the optional
-        field was not specified.
+        The default value of None is preserved in the field to indicate that the optional field was not specified.
         If any value other than None is provided, it is passed through to `__init__`.
 
         Parameters
@@ -229,6 +300,7 @@ class BaseBatch(Generic[T]):
         Returns
         -------
         The Arrow array encapsulating the data.
+
         """
         if data is None:
             return None
@@ -271,6 +343,7 @@ class BaseBatch(Generic[T]):
         Returns
         -------
         The Arrow array encapsulating the data.
+
         """
         raise NotImplementedError
 
@@ -283,33 +356,276 @@ class BaseBatch(Generic[T]):
         return self.pa_array
 
 
-class ComponentBatchMixin(ComponentBatchLike):
-    def component_name(self) -> str:
+class ComponentColumn:
+    """
+    A column of components that can be sent using `send_columns`.
+
+    This is represented by a ComponentBatch array that has been partitioned into multiple segments.
+    This is useful for reinterpreting a single contiguous batch as multiple sub-batches
+    to use with the [`send_columns`][rerun.send_columns] API.
+    """
+
+    def __init__(self, component_batch: ComponentBatchLike, *, lengths: npt.ArrayLike | None = None):
         """
-        The name of the component.
+        Construct a new component column.
+
+        This makes it possible to use `rr.send_columns` to send columnar data directly into Rerun.
+
+        The returned column will be partitioned into unit-length sub-batches by default.
+        Use `ComponentColumn.partition` to repartition the data as needed.
+
+        Parameters
+        ----------
+        component_batch:
+            The component batch to partition into a column.
+
+        lengths:
+            The offsets to partition the component at.
+            If specified, `lengths` must sum to the total length of the component batch.
+            If left unspecified, it will default to unit-length batches.
+
+        """
+        self.component_batch = component_batch
+
+        if "Indicator" in component_batch.component_descriptor().component_name:
+            if lengths is None:
+                # Indicator component, no lengths -> zero-sized batches by default
+                self.lengths = np.zeros(len(component_batch.as_arrow_array()))
+            else:
+                # Normal component, lengths specified -> respect outer length, but enforce zero-sized batches still
+                self.lengths = np.zeros(len(np.array(lengths)))
+        else:
+            if lengths is None:
+                # Normal component, no lengths -> unit-sized batches by default
+                self.lengths = np.ones(len(component_batch.as_arrow_array()))
+            else:
+                # Normal component, lengths specified -> follow instructions
+                self.lengths = np.array(lengths)
+
+    def component_descriptor(self) -> ComponentDescriptor:
+        """
+        Returns the complete descriptor of the component.
 
         Part of the `ComponentBatchLike` logging interface.
         """
-        return self._ARROW_TYPE._TYPE_NAME  # type: ignore[attr-defined, no-any-return]
+        return self.component_batch.component_descriptor()
+
+    def as_arrow_array(self) -> pa.Array:
+        """
+        The component as an arrow batch.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        array = self.component_batch.as_arrow_array()
+        offsets = np.concatenate((np.array([0], dtype="int32"), np.cumsum(self.lengths, dtype="int32")))
+        return pa.ListArray.from_arrays(offsets, array)
+
+    def partition(self, lengths: npt.ArrayLike) -> ComponentColumn:
+        """
+        (Re)Partitions the column.
+
+        This makes it possible to use `rr.send_columns` to send columnar data directly into Rerun.
+
+        The returned columns will be partitioned into unit-length sub-batches by default.
+        Use `ComponentColumn.partition` to repartition the data as needed.
+
+        Parameters
+        ----------
+        lengths:
+            The offsets to partition the component at.
+
+        Returns
+        -------
+        The (re)partitioned column.
+
+        """
+        return ComponentColumn(self.component_batch, lengths=lengths)
+
+
+class ComponentColumnList(Iterable[ComponentColumn]):
+    """
+    A collection of [ComponentColumn][]s.
+
+    Useful to partition and log multiple columns at once.
+    """
+
+    def __init__(self, columns: Iterable[ComponentColumn]):
+        self._columns = list(columns)
+
+    def __iter__(self) -> Iterator[ComponentColumn]:
+        return iter(self._columns)
+
+    def __len__(self) -> int:
+        return len(self._columns)
+
+    def partition(self, lengths: npt.ArrayLike) -> ComponentColumnList:
+        """
+        (Re)Partitions the columns.
+
+        This makes it possible to use `rr.send_columns` to send columnar data directly into Rerun.
+
+        The returned columns will be partitioned into unit-length sub-batches by default.
+        Use `ComponentColumn.partition` to repartition the data as needed.
+
+        Parameters
+        ----------
+        lengths:
+            The offsets to partition the component at.
+            If specified, `lengths` must sum to the total length of the component batch.
+            If left unspecified, it will default to unit-length batches.
+
+        Returns
+        -------
+        The partitioned component batch as a column.
+
+        """
+        return ComponentColumnList([col.partition(lengths) for col in self._columns])
+
+
+class ComponentBatchMixin(ComponentBatchLike):
+    def component_descriptor(self) -> ComponentDescriptor:
+        """
+        Returns the complete descriptor of the component.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        return self._COMPONENT_DESCRIPTOR  # type: ignore[attr-defined, no-any-return]
+
+    def described(self, descriptor: ComponentDescriptor | None = None) -> DescribedComponentBatch:
+        """Wraps the current `ComponentBatchLike` in a `DescribedComponentBatch` with the given descriptor or, if None, the component's descriptor."""
+        if descriptor is None:
+            descriptor = self.component_descriptor()
+        return DescribedComponentBatch(self, descriptor)
+
+    def with_descriptor(self, descriptor: ComponentDescriptor) -> DescribedComponentBatch:
+        """Wraps the current `ComponentBatchLike` in a `DescribedComponentBatch` with the given descriptor."""
+        return DescribedComponentBatch(self, descriptor)
+
+    def with_descriptor_overrides(
+        self, *, archetype_name: str | None, archetype_field_name: str | None
+    ) -> DescribedComponentBatch:
+        """Unconditionally sets `archetype_name` & `archetype_field_name` to the given ones (if specified)."""
+        descriptor = self.component_descriptor()
+        component_name = descriptor.component_name
+        archetype_name = archetype_name if archetype_name is not None else descriptor.archetype_name
+        archetype_field_name = (
+            archetype_field_name if archetype_field_name is not None else descriptor.archetype_field_name
+        )
+        return DescribedComponentBatch(
+            self,
+            ComponentDescriptor(
+                component_name, archetype_name=archetype_name, archetype_field_name=archetype_field_name
+            ),
+        )
+
+    def or_with_descriptor_overrides(
+        self, *, archetype_name: str | None, archetype_field_name: str | None
+    ) -> DescribedComponentBatch:
+        """Sets `archetype_name` & `archetype_field_name` to the given one iff it's not already set."""
+        descriptor = self.component_descriptor()
+        component_name = descriptor.component_name
+        archetype_name = descriptor.archetype_name if descriptor.archetype_name is not None else archetype_name
+        archetype_field_name = (
+            descriptor.archetype_field_name if descriptor.archetype_field_name is not None else archetype_field_name
+        )
+        return DescribedComponentBatch(
+            self,
+            ComponentDescriptor(
+                component_name, archetype_name=archetype_name, archetype_field_name=archetype_field_name
+            ),
+        )
+
+    def partition(self, lengths: npt.ArrayLike | None = None) -> ComponentColumn:
+        """
+        Partitions the component batch into multiple sub-batches, forming a column.
+
+        This makes it possible to use `rr.send_columns` to send columnar data directly into Rerun.
+
+        The returned columns will be partitioned into unit-length sub-batches by default.
+        Use `ComponentColumn.partition` to repartition the data as needed.
+
+        Parameters
+        ----------
+        lengths:
+            The offsets to partition the component at.
+            If specified, `lengths` must sum to the total length of the component batch.
+            If left unspecified, it will default to unit-length batches.
+
+        Returns
+        -------
+        The partitioned component batch as a column.
+
+        """
+        return ComponentColumn(self, lengths=lengths)
+
+
+class ComponentMixin(ComponentBatchLike):
+    """
+    Makes components adhere to the `ComponentBatchLike` interface.
+
+    A single component will always map to a batch of size 1.
+
+    The class using the mixin must define the `_BATCH_TYPE` field, which should be a subclass of `BaseBatch`.
+    """
+
+    @classmethod
+    def arrow_type(cls) -> pa.DataType:
+        """
+        The pyarrow type of this batch.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        return cls._BATCH_TYPE._ARROW_DATATYPE  # type: ignore[attr-defined, no-any-return]
+
+    def component_descriptor(self) -> ComponentDescriptor:
+        """
+        Returns the complete descriptor of the component.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        return self._BATCH_TYPE._COMPONENT_DESCRIPTOR  # type: ignore[attr-defined, no-any-return]
+
+    def as_arrow_array(self) -> pa.Array:
+        """
+        The component as an arrow batch.
+
+        Part of the `ComponentBatchLike` logging interface.
+        """
+        return self._BATCH_TYPE([self]).as_arrow_array()  # type: ignore[attr-defined, no-any-return]
 
 
 @catch_and_log_exceptions(context="creating empty array")
 def _empty_pa_array(type: pa.DataType) -> pa.Array:
+    if type == pa.null():
+        return pa.nulls(0)
+
     if isinstance(type, pa.ExtensionType):
         return type.wrap_array(_empty_pa_array(type.storage_type))
 
     # Creation of empty arrays of dense unions aren't implemented in pyarrow yet.
     if isinstance(type, pa.UnionType):
-        return pa.UnionArray.from_buffers(
-            type=type,
-            length=0,
-            buffers=[
-                None,
-                pa.array([], type=pa.int8()).buffers()[1],
-                pa.array([], type=pa.int32()).buffers()[1],
-            ],
-            children=[_empty_pa_array(field_type.type) for field_type in type],
-        )
+        if type.mode == "dense":
+            return pa.UnionArray.from_buffers(
+                type=type,
+                length=0,
+                buffers=[
+                    None,
+                    pa.array([], type=pa.int8()).buffers()[1],  # types
+                    pa.array([], type=pa.int32()).buffers()[1],  # offsets
+                ],
+                children=[_empty_pa_array(field_type.type) for field_type in type],
+            )
+        else:
+            return pa.UnionArray.from_buffers(
+                type=type,
+                length=0,
+                buffers=[
+                    None,
+                    pa.array([], type=pa.int8()).buffers()[1],  # types
+                ],
+                children=[_empty_pa_array(field_type.type) for field_type in type],
+            )
+
     # This also affects structs *containing* dense unions.
     if isinstance(type, pa.StructType):
         return pa.StructArray.from_arrays([_empty_pa_array(field_type.type) for field_type in type], fields=list(type))
